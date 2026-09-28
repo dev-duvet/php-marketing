@@ -1,0 +1,36 @@
+# CreateZA on Vercel (container image function). Also usable anywhere Docker runs:
+#   docker build -f Dockerfile.vercel -t createza . && docker run -p 8080:80 createza
+FROM php:8.3-apache
+
+# PostgreSQL driver (SQLite, mbstring and fileinfo ship with the base image)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpq-dev \
+ && docker-php-ext-install pdo_pgsql \
+ && apt-get purge -y --auto-remove \
+ && rm -rf /var/lib/apt/lists/*
+
+# Apache: serve public/, allow .htaccess rewrites, add security headers module
+RUN a2enmod rewrite headers \
+ && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/000-default.conf \
+ && printf '<Directory /var/www/html/public>\n    AllowOverride All\n    Require all granted\n</Directory>\nServerTokens Prod\nServerSignature Off\n' > /etc/apache2/conf-available/createza.conf \
+ && a2enconf createza
+
+# PHP: production settings, uploads within Vercel's 4.5 MB request limit
+RUN cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
+ && printf 'upload_max_filesize = 4M\npost_max_size = 5M\nexpose_php = Off\ndate.timezone = Africa/Johannesburg\n' > "$PHP_INI_DIR/conf.d/createza.ini"
+
+# Serverless defaults: no persistent disk, so sessions/uploads live in the database.
+# Set DATABASE_URL (e.g. Neon) in the Vercel project for permanent data; otherwise SQLite in /tmp (demo mode).
+ENV APP_ENV=production \
+    VERCEL=1 \
+    DB_PATH=/tmp/createza.sqlite \
+    UPLOAD_DRIVER=database \
+    UPLOAD_MAX_MB=4
+
+WORKDIR /var/www/html
+COPY . /var/www/html
+RUN rm -rf tests .git .claude storage/*.sqlite* \
+ && mkdir -p storage/logs public/uploads \
+ && chown -R www-data:www-data storage public/uploads
+
+EXPOSE 80

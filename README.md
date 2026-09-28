@@ -107,9 +107,9 @@ Change or remove these accounts, and set a new `DEMO_PASSWORD`, before deploying
 
 ## 8. Deploying to Vercel
 
-The repo deploys to Vercel as is. `vercel.json` serves `public/` as static files and sends every other request to `api/index.php`, which runs on the community [`vercel-php`](https://github.com/vercel-community/php) runtime (PHP 8.3).
+The repo deploys to Vercel as a container image. Vercel detects `Dockerfile.vercel`, builds it (official `php:8.3-apache`) and routes all traffic to it. The community `vercel-php` runtime is not used; it has been broken on Vercel since August 2026 ([vercel-community/php#650](https://github.com/vercel-community/php/issues/650)).
 
-1. Import the GitHub repo into Vercel. There's no build command, and pushes to `main` deploy automatically.
+1. Import the GitHub repo into Vercel. Pushes to `main` deploy automatically.
 2. **Persistent data:** open the Vercel project → **Storage** → **Create database** → **Neon (Postgres)** → **Connect** to this project. That sets `DATABASE_URL` automatically.
 3. Redeploy. On the first request the app creates the Postgres schema and loads the demo data.
 
@@ -119,7 +119,14 @@ Optional project environment variables: `DEMO_PASSWORD` (set it before the first
 
 ## 9. Docker instructions
 
-Docker packaging (a `Dockerfile` and `docker-compose.yml`) is the next step and isn't in this version yet. The app has no dependencies beyond PHP and its SQLite extension, so any `php:8.3-apache` image will work: set the document root to `public/`, enable `mod_rewrite`, and mount `storage/` and `public/uploads/` as volumes.
+The same image runs anywhere Docker does:
+
+```bash
+docker build -f Dockerfile.vercel -t createza .
+docker run -p 8080:80 createza
+```
+
+Open http://localhost:8080. Pass `-e DATABASE_URL=postgres://…` for persistent Postgres; otherwise it uses demo-mode SQLite in `/tmp`.
 
 ## 10. Testing instructions
 
@@ -165,7 +172,6 @@ Run the smoke test against a freshly seeded database (`php database/migrate.php 
 ## 13. Folder structure
 
 ```
-├── api/index.php           Vercel serverless entry point
 ├── app/
 │   ├── Controllers/        public site controllers + Admin/ dashboard controllers
 │   ├── Helpers/            global helper functions (escaping, queries, formatting)
@@ -179,7 +185,7 @@ Run the smoke test against a freshly seeded database (`php database/migrate.php 
 ├── public/                 web root: index.php, router.php, assets/, uploads/
 ├── storage/                SQLite database and logs (not committed)
 ├── tests/                  run.php + *Test.php unit tests, smoke.php end-to-end check
-├── vercel.json             Vercel routing and PHP runtime
+├── Dockerfile.vercel       container image (Vercel and Docker)
 └── .env.example
 ```
 
