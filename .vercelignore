@@ -1,0 +1,7 @@
+.env
+.claude
+storage/*.sqlite*
+storage/logs/*.log
+public/uploads/*
+!public/uploads/.gitkeep
+tests

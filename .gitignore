@@ -1,0 +1,10 @@
+.env
+/storage/*.sqlite
+/storage/logs/*
+!/storage/logs/.gitkeep
+/public/uploads/*
+!/public/uploads/.htaccess
+!/public/uploads/.gitkeep
+/.claude/launch.json
+.DS_Store
+Thumbs.db
