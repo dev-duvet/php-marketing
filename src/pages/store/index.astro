@@ -1,0 +1,18 @@
+---
+import Icon from '../../components/Icon.astro';
+import PageHero from '../../components/PageHero.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { all } from '../../lib/db.ts';
+
+const products = await all('SELECT * FROM products WHERE is_active = 1 ORDER BY id');
+---
+<PublicLayout title="Store">
+  <PageHero eyebrow="Store" heading="Creative goods" intro="Branded essentials for everyday creatives." />
+  <section class="section container section--tight">
+    <p class="notice"><Icon name="clock" /> Online payment integration is coming soon. Orders are confirmed by email with payment details.</p>
+    <div class="grid grid--4">
+      {products.map((product) => <ProductCard product={product} />)}
+    </div>
+  </section>
+</PublicLayout>

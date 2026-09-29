@@ -1,0 +1,263 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PageHead from '../../components/PageHead.astro';
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getSettings, logActivity, setSetting } from '../../lib/app.ts';
+import { changePassword, isStaff } from '../../lib/auth.ts';
+import { ORDER_STATUSES, ROLES, SOCIAL_NETWORKS } from '../../lib/catalog.ts';
+import { all, insert, one, run } from '../../lib/db.ts';
+import { fmtDate, mediaUrl, money, timeAgo } from '../../lib/format.ts';
+import { done, handle, readForm } from '../../lib/forms.ts';
+import { hashPassword } from '../../lib/password.ts';
+import { filesFrom, storeUpload } from '../../lib/upload.ts';
+import { ValidationError, Validator, int, str } from '../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const isAdmin = user.role === 'admin';
+const staff = isStaff(user);
+const TEXT_KEYS = ['company_name', 'company_tagline', 'company_email', 'company_phone', 'company_address'];
+const COLOR_KEYS: [string, string][] = [['color_navy', 'Navy'], ['color_red', 'Red'], ['color_gold', 'Gold']];
+const NOTIFY_KEYS = ['notify_new_lead', 'notify_approval', 'notify_order'];
+
+if (Astro.request.method === 'POST') {
+  const { form, data } = await readForm(Astro);
+  const action = str(data.action);
+  const denied = () => {
+    throw new ValidationError('You don’t have permission to change that.');
+  };
+  return handle(Astro, data, `/admin/settings#${action === 'password' ? 'account' : action === 'order_status' ? 'orders' : action === 'company' ? 'company' : 'team'}`, async () => {
+    if (action === 'password') {
+      const error = await changePassword(user, String(data.current_password ?? ''), String(data.new_password ?? ''));
+      if (error) throw new ValidationError(error);
+      return done(Astro, 'Password updated.', '/admin/settings#account');
+    }
+    if (action === 'order_status') {
+      if (!staff) denied();
+      if (!ORDER_STATUSES[str(data.status)]) throw new ValidationError('Choose a valid order status.');
+      await run('UPDATE orders SET status = ? WHERE id = ?', [str(data.status), int(data.order_id)]);
+      return done(Astro, 'Order updated.', '/admin/settings#orders');
+    }
+    if (!isAdmin) denied();
+    if (action === 'company') {
+      new Validator(data).required('company_name', 'Company name').email('company_email').check();
+      for (const [key] of COLOR_KEYS) if (!/^#[0-9A-Fa-f]{6}$/.test(str(data[key]))) throw new ValidationError('Brand colours must be hex values like #14284B.');
+      for (const key of Object.keys(SOCIAL_NETWORKS)) {
+        const url = str(data[`social_${key}`]);
+        if (url && !/^https?:\/\//.test(url)) throw new ValidationError('Social links must start with http:// or https://');
+      }
+      for (const key of [...TEXT_KEYS, ...COLOR_KEYS.map(([k]) => k), ...Object.keys(SOCIAL_NETWORKS).map((k) => `social_${k}`)]) {
+        await setSetting(key, str(data[key]).slice(0, 255));
+      }
+      for (const key of NOTIFY_KEYS) await setSetting(key, data[key] ? '1' : '0');
+      const [logo] = filesFrom(form, 'logo');
+      if (logo) await setSetting('logo_path', (await storeUpload(logo, ['image'])).path);
+      await logActivity(user.id, 'settings.updated', 'Company settings updated', Astro.locals.ip);
+      return done(Astro, 'Settings saved.', '/admin/settings');
+    }
+    if (action === 'add_user') {
+      new Validator(data).required('name', 'Name').required('email', 'Email').email('email').in('role', Object.keys(ROLES), 'role').check();
+      if (String(data.password ?? '').length < 10) throw new ValidationError('Passwords must be at least 10 characters.');
+      const email = str(data.email).toLowerCase();
+      if (await one('SELECT id FROM users WHERE LOWER(email) = ?', [email])) throw new ValidationError('A user with that email already exists.');
+      const role = str(data.role) || 'team';
+      const clientId = role === 'client' && str(data.client_id) ? int(data.client_id) : null;
+      if (role === 'client' && !clientId) throw new ValidationError('Client users must be linked to a client.');
+      await insert('users', { name: str(data.name), email, password_hash: await hashPassword(String(data.password)), role, client_id: clientId, title: str(data.title) });
+      await logActivity(user.id, 'user.created', `User ${email} added`, Astro.locals.ip);
+      return done(Astro, 'Team member added.', '/admin/settings#team');
+    }
+    if (action === 'update_user') {
+      const target = int(data.user_id);
+      const role = str(data.role);
+      if (!ROLES[role]) throw new ValidationError('Choose a valid role.');
+      const active = data.is_active ? 1 : 0;
+      if (target === user.id && (role !== 'admin' || !active)) throw new ValidationError('You cannot remove your own admin access.');
+      await run('UPDATE users SET role = ?, is_active = ? WHERE id = ?', [role, active, target]);
+      return done(Astro, 'User updated.', '/admin/settings#team');
+    }
+    throw new ValidationError('Unknown action.');
+  });
+}
+
+const [settings, users, clients, orders, registrations, log] = await Promise.all([
+  getSettings(),
+  isAdmin ? all('SELECT u.*, c.name AS client_name FROM users u LEFT JOIN clients c ON c.id = u.client_id ORDER BY u.role, u.name') : Promise.resolve([]),
+  isAdmin ? all('SELECT id, name FROM clients ORDER BY name') : Promise.resolve([]),
+  staff ? all('SELECT o.*, (SELECT SUM(quantity) FROM order_items WHERE order_id = o.id) AS items FROM orders o ORDER BY o.created_at DESC, o.id DESC LIMIT 20') : Promise.resolve([]),
+  staff
+    ? all('SELECT e.id, e.title, e.starts_at, e.capacity, COALESCE(SUM(r.guests), 0) AS booked, COUNT(r.id) AS registrations FROM events e LEFT JOIN event_registrations r ON r.event_id = e.id GROUP BY e.id, e.title, e.starts_at, e.capacity ORDER BY e.starts_at DESC')
+    : Promise.resolve([]),
+  isAdmin ? all('SELECT l.*, u.name FROM activity_logs l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 15') : Promise.resolve([]),
+]);
+const s = (key: string) => settings[key] ?? '';
+---
+<AdminLayout title="Settings">
+  <PageHead heading="Settings" sub="Company details, brand, team and website operations." />
+  <nav class="tabs tabs--links settings-nav" aria-label="Settings sections">
+    {isAdmin && <><a href="#company">Company &amp; brand</a><a href="#team">Team &amp; roles</a></>}
+    {staff && <><a href="#orders">Store orders</a><a href="#events">Event registrations</a></>}
+    <a href="#account">My account</a>
+  </nav>
+
+  {isAdmin && (
+    <form class="panel form" id="company" method="post" action="/admin/settings" enctype="multipart/form-data">
+      <Csrf />
+      <input type="hidden" name="action" value="company" />
+      <h2>Company details</h2>
+      <div class="form-grid">
+        <label class="field"><span>Company name</span><input name="company_name" required value={s('company_name')} /></label>
+        <label class="field"><span>Tagline</span><input name="company_tagline" value={s('company_tagline')} /></label>
+        <label class="field"><span>Email</span><input type="email" name="company_email" value={s('company_email')} /></label>
+        <label class="field"><span>Phone</span><input name="company_phone" value={s('company_phone')} /></label>
+        <label class="field field--full"><span>Address</span><input name="company_address" value={s('company_address')} /></label>
+      </div>
+
+      <h2>Brand</h2>
+      <div class="form-grid">
+        {COLOR_KEYS.map(([key, label]) => (
+          <label class="field color-field"><span>{label}</span>
+            <span class="color-field__row"><input type="color" value={s(key)} data-color-sync={key} aria-label={`${label} colour picker`} /><input name={key} id={key} value={s(key)} pattern="#[0-9A-Fa-f]{6}" required /></span>
+          </label>
+        ))}
+        <div class="field">
+          <span>Logo</span>
+          <span class="logo-field"><img src={mediaUrl(s('logo_path'))} alt="Current logo" width="64" height="64" /><input type="file" name="logo" accept="image/png,image/jpeg,image/webp" /></span>
+        </div>
+      </div>
+
+      <h2>Social links</h2>
+      <div class="form-grid">
+        {Object.entries(SOCIAL_NETWORKS).map(([key, label]) => (
+          <label class="field"><span>{label}</span><input type="url" name={`social_${key}`} value={s(`social_${key}`)} placeholder="https://" /></label>
+        ))}
+      </div>
+
+      <h2>Notification preferences</h2>
+      <div class="check-list">
+        <label class="check"><input type="checkbox" name="notify_new_lead" value="1" checked={s('notify_new_lead') === '1'} /> New website enquiries</label>
+        <label class="check"><input type="checkbox" name="notify_approval" value="1" checked={s('notify_approval') === '1'} /> Approval decisions and comments</label>
+        <label class="check"><input type="checkbox" name="notify_order" value="1" checked={s('notify_order') === '1'} /> Store orders and event registrations</label>
+      </div>
+      <p class="muted small">Email delivery is not configured in the MVP — preferences are saved for when it is.</p>
+      <div class="form-actions"><span class="spacer"></span><button class="btn btn--primary" type="submit">Save settings</button></div>
+    </form>
+  )}
+
+  {isAdmin && (
+    <section class="panel" id="team">
+      <h2>Team members &amp; roles</h2>
+      <p class="muted small"><strong>Admin</strong>: everything, including settings and users. <strong>Team member</strong>: content, projects, leads, assets and analytics. <strong>Client</strong>: sees and approves content for their own projects only.</p>
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role &amp; access</th></tr></thead>
+          <tbody>
+            {users.map((u) => (
+              <tr>
+                <td><strong>{u.name}</strong><span class="muted small block">{u.title ?? ''}{u.client_name ? ` · ${u.client_name}` : ''}</span></td>
+                <td class="muted">{u.email}</td>
+                <td>
+                  <form class="inline-form" method="post" action="/admin/settings">
+                    <Csrf />
+                    <input type="hidden" name="action" value="update_user" />
+                    <input type="hidden" name="user_id" value={u.id} />
+                    <select name="role" aria-label={`Role for ${u.name}`}>{Object.entries(ROLES).map(([k, l]) => <option value={k} selected={u.role === k}>{l}</option>)}</select>
+                    <label class="check"><input type="checkbox" name="is_active" value="1" checked={Boolean(u.is_active)} /> Active</label>
+                    <button class="btn btn--ghost btn--sm" type="submit">Save</button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <details class="add-user">
+        <summary class="btn btn--ghost btn--sm"><Icon name="plus" /> Add team member</summary>
+        <form class="form" method="post" action="/admin/settings">
+          <Csrf />
+          <input type="hidden" name="action" value="add_user" />
+          <div class="form-grid">
+            <label class="field"><span>Name</span><input name="name" required /></label>
+            <label class="field"><span>Email</span><input type="email" name="email" required /></label>
+            <label class="field"><span>Job title</span><input name="title" /></label>
+            <label class="field"><span>Role</span><select name="role">{Object.entries(ROLES).map(([k, l]) => <option value={k} selected={k === 'team'}>{l}</option>)}</select></label>
+            <label class="field"><span>Client (for client users)</span><select name="client_id"><option value="">—</option>{clients.map((c) => <option value={c.id}>{c.name}</option>)}</select></label>
+            <label class="field"><span>Temporary password (10+ characters)</span><input type="password" name="password" minlength="10" required autocomplete="new-password" /></label>
+          </div>
+          <button class="btn btn--primary" type="submit">Add user</button>
+        </form>
+      </details>
+    </section>
+  )}
+
+  {staff && (
+    <section class="panel" id="orders">
+      <h2>Store orders</h2>
+      <p class="muted small">Payment integration is coming soon — mark orders as paid once payment is received.</p>
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Reference</th><th>Customer</th><th>Items</th><th>Total</th><th>Placed</th><th>Status</th></tr></thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr>
+                <td><strong>{o.reference}</strong></td>
+                <td>{o.customer_name}<span class="muted small block">{o.email} · {o.city}</span></td>
+                <td>{o.items}</td>
+                <td>{money(Number(o.subtotal_cents))}</td>
+                <td class="muted">{fmtDate(o.created_at, 'shortTime')}</td>
+                <td>
+                  <form class="inline-form" method="post" action="/admin/settings">
+                    <Csrf />
+                    <input type="hidden" name="action" value="order_status" />
+                    <input type="hidden" name="order_id" value={o.id} />
+                    <select name="status" data-autosubmit aria-label={`Status for order ${o.reference}`}>
+                      {Object.entries(ORDER_STATUSES).map(([k, l]) => <option value={k} selected={o.status === k}>{l}</option>)}
+                    </select>
+                  </form>
+                </td>
+              </tr>
+            ))}
+            {orders.length === 0 && <tr><td colspan="6" class="muted">No orders yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )}
+
+  {staff && (
+    <section class="panel" id="events">
+      <h2>Event registrations</h2>
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Event</th><th>Date</th><th>Registrations</th><th>Capacity</th></tr></thead>
+          <tbody>
+            {registrations.map((r) => (
+              <tr><td>{r.title}</td><td>{fmtDate(r.starts_at)}</td><td>{r.registrations} ({r.booked} people)</td><td>{r.booked}/{r.capacity}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )}
+
+  <form class="panel form" id="account" method="post" action="/admin/settings">
+    <Csrf />
+    <input type="hidden" name="action" value="password" />
+    <h2>My account</h2>
+    <p class="muted">{user.name} · {user.email} · {ROLES[user.role]}</p>
+    <div class="form-grid">
+      <label class="field"><span>Current password</span><input type="password" name="current_password" required autocomplete="current-password" /></label>
+      <label class="field"><span>New password (10+ characters)</span><input type="password" name="new_password" minlength="10" required autocomplete="new-password" /></label>
+    </div>
+    <button class="btn btn--navy" type="submit">Change password</button>
+  </form>
+
+  {log.length > 0 && (
+    <section class="panel">
+      <h2>Recent activity</h2>
+      <ul class="simple-list">
+        {log.map((l) => <li><span>{l.description}</span><span class="muted small">{l.name ?? 'Website'} · {timeAgo(l.created_at)}</span></li>)}
+      </ul>
+    </section>
+  )}
+</AdminLayout>

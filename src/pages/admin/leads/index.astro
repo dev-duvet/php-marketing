@@ -1,0 +1,73 @@
+---
+import Csrf from '../../../components/Csrf.astro';
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { LEAD_STATUSES, serviceName } from '../../../lib/catalog.ts';
+import { all } from '../../../lib/db.ts';
+import { fmtDate } from '../../../lib/format.ts';
+
+const search = (Astro.url.searchParams.get('q') ?? '').trim();
+const assigned = Astro.url.searchParams.get('assigned') ?? '';
+let where = '1=1';
+const params: (string | number)[] = [];
+if (search) {
+  where += ' AND (LOWER(l.name) LIKE ? OR LOWER(l.email) LIKE ? OR LOWER(l.organisation) LIKE ?)';
+  const like = `%${search.toLowerCase()}%`;
+  params.push(like, like, like);
+}
+if (assigned) {
+  where += ' AND l.assigned_to = ?';
+  params.push(Number(assigned));
+}
+const [leads, team] = await Promise.all([
+  all(
+    `SELECT l.*, u.name AS assignee, (SELECT COUNT(*) FROM lead_activities WHERE lead_id = l.id) AS activity_count
+     FROM leads l LEFT JOIN users u ON u.id = l.assigned_to WHERE ${where} ORDER BY l.updated_at DESC, l.id DESC`,
+    params,
+  ),
+  all("SELECT id, name FROM users WHERE role != 'client' ORDER BY name"),
+]);
+const columns = Object.keys(LEAD_STATUSES).map((status) => [status, leads.filter((l) => l.status === status)] as const);
+---
+<AdminLayout title="Leads">
+  <PageHead heading="Leads" sub="Manage your sales pipeline and enquiries. Drag cards between columns to update their stage.">
+    <a class="btn btn--primary" href="/admin/leads/new"><Icon name="plus" /> New lead</a>
+  </PageHead>
+  <form class="toolbar" method="get" action="/admin/leads">
+    <label class="search-field"><Icon name="search" /><span class="sr-only">Search leads</span><input type="search" name="q" value={search} placeholder="Search leads…" /></label>
+    <label class="sr-only" for="assigned">Assigned to</label>
+    <select id="assigned" name="assigned" data-autosubmit>
+      <option value="">Everyone</option>
+      {team.map((t) => <option value={t.id} selected={assigned === String(t.id)}>{t.name}</option>)}
+    </select>
+    <button class="btn btn--ghost btn--sm" type="submit">Filter</button>
+  </form>
+
+  <div class="kanban" data-kanban>
+    {columns.map(([status, list]) => (
+      <section class={`kanban__col kanban__col--${status}`} data-status={status} aria-label={LEAD_STATUSES[status]}>
+        <header class="kanban__head"><h2>{LEAD_STATUSES[status]}</h2><span class="count" data-count>{list.length}</span></header>
+        <div class="kanban__list" data-dropzone-list>
+          {list.map((lead) => (
+            <article class="lead-card" draggable="true" data-lead={lead.id}>
+              <a href={`/admin/leads/${lead.id}`}><strong>{lead.name}</strong></a>
+              <span class="muted small">{serviceName(lead.service)}</span>
+              <span class="lead-card__meta">
+                <span title="Activity"><Icon name="message" /> {lead.activity_count}</span>
+                {lead.follow_up_date && <span title="Follow up"><Icon name="calendar" /> {fmtDate(lead.follow_up_date, 'short')}</span>}
+              </span>
+              <form class="lead-card__move" method="post" action={`/admin/leads/${lead.id}/status`}>
+                <Csrf />
+                <label class="sr-only" for={`move-${lead.id}`}>Move {lead.name} to</label>
+                <select id={`move-${lead.id}`} name="status" data-autosubmit>
+                  {Object.entries(LEAD_STATUSES).map(([k, l]) => <option value={k} selected={k === status}>{l}</option>)}
+                </select>
+              </form>
+            </article>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</AdminLayout>

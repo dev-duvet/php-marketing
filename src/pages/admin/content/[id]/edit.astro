@@ -1,0 +1,15 @@
+---
+import ContentForm from '../../../../components/ContentForm.astro';
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+import { handleContentPost } from '../../../../lib/contentForm.ts';
+import { one } from '../../../../lib/db.ts';
+import { int } from '../../../../lib/validate.ts';
+
+const id = int(Astro.params.id);
+const item = await one('SELECT * FROM content_items WHERE id = ?', [id]);
+if (!item) return Astro.rewrite('/404');
+if (Astro.request.method === 'POST') return handleContentPost(Astro, id);
+---
+<AdminLayout title="Edit content">
+  <ContentForm item={item} />
+</AdminLayout>

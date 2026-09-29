@@ -1,0 +1,28 @@
+---
+import MediaCard from '../components/MediaCard.astro';
+import PageHero from '../components/PageHero.astro';
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { GALLERY_CATEGORIES } from '../lib/catalog.ts';
+import { all } from '../lib/db.ts';
+
+const requested = Astro.url.searchParams.get('category') ?? '';
+const category = GALLERY_CATEGORIES[requested] ? requested : '';
+// Everything renders; non-matching items are hidden so the filter works without reloading.
+const items = await all('SELECT * FROM assets WHERE public_category IS NOT NULL ORDER BY id DESC');
+const shown = items.filter((i) => !category || i.public_category === category).length;
+---
+<PublicLayout title="Gallery">
+  <PageHero eyebrow="Gallery" heading="Social content" intro="Photography, video and creative content from recent work and behind the scenes." />
+  <section class="container section section--tight">
+    <nav class="filters" aria-label="Filter gallery" data-gallery-filters>
+      <a href="/gallery" class={`filter ${category === '' ? 'is-active' : ''}`} data-filter="">All</a>
+      {Object.entries(GALLERY_CATEGORIES).map(([key, label]) => (
+        <a href={`/gallery?category=${key}`} class={`filter ${category === key ? 'is-active' : ''}`} data-filter={key}>{label}</a>
+      ))}
+    </nav>
+    <div class="gallery-grid" data-gallery>
+      {items.map((item) => <MediaCard item={item} hidden={category !== '' && item.public_category !== category} />)}
+    </div>
+    <p class="muted center" data-gallery-empty hidden={shown > 0}>Nothing in this category yet.</p>
+  </section>
+</PublicLayout>

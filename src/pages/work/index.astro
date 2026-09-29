@@ -1,0 +1,28 @@
+---
+import Icon from '../../components/Icon.astro';
+import PageHero from '../../components/PageHero.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { serviceName } from '../../lib/catalog.ts';
+import { all } from '../../lib/db.ts';
+import { mediaUrl } from '../../lib/format.ts';
+
+const projects = await all('SELECT * FROM projects WHERE is_public = 1 ORDER BY due_date DESC');
+---
+<PublicLayout title="Work">
+  <PageHero eyebrow="Work" heading="Selected work" intro="A closer look at recent creative projects across photo, video, web and social. Projects shown are demo placeholders until real case studies are published." />
+  <section class="section container section--tight">
+    <div class="grid grid--2">
+      {projects.map((p) => (
+        <article class="case-card">
+          <a href={`/work/${p.slug}`}><img src={mediaUrl(p.cover_image)} alt="" loading="lazy" /></a>
+          <div class="case-card__body">
+            <span class="chip">{serviceName(p.service_type)}</span>
+            <h2><a href={`/work/${p.slug}`}>{p.name}</a></h2>
+            <p class="muted">{p.description}</p>
+            <a class="link-arrow" href={`/work/${p.slug}`}>View case study <Icon name="arrow-right" /></a>
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+</PublicLayout>

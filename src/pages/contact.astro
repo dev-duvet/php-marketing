@@ -1,0 +1,65 @@
+---
+import Csrf from '../components/Csrf.astro';
+import Icon from '../components/Icon.astro';
+import PageHero from '../components/PageHero.astro';
+import Socials from '../components/Socials.astro';
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { BUDGETS, SERVICES } from '../lib/catalog.ts';
+import { clearOld, done, handle, oldValue, readForm } from '../lib/forms.ts';
+import { createLead } from '../lib/leads.ts';
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  // Honeypot: real people never fill this hidden field.
+  if (data.website) return Astro.redirect('/contact?sent=1', 303);
+  return handle(Astro, data, '/contact#enquiry', async () => {
+    await createLead(data, 'website');
+    return done(Astro, 'Thanks — your enquiry is in. We’ll be in touch within two working days.', '/contact?sent=1');
+  });
+}
+
+const old = (k: string, d = '') => oldValue(Astro, k, d);
+const service = old('service', Astro.url.searchParams.get('service') ?? '');
+const s = Astro.locals.settings;
+const values = { name: old('name'), email: old('email'), phone: old('phone'), organisation: old('organisation'), budget: old('budget'), details: old('details'), preferred_start: old('preferred_start') };
+clearOld(Astro);
+---
+<PublicLayout title="Contact">
+  <PageHero eyebrow="Contact" heading="Start a project" intro="Tell us what you’re planning. We reply to every enquiry within two working days." />
+  <section class="section container section--tight split split--top contact">
+    <form class="card form" method="post" action="/contact" id="enquiry" novalidate>
+      <Csrf />
+      <div class="hp" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label></div>
+      <div class="form-grid">
+        <label class="field"><span>Name <em>*</em></span><input name="name" required maxlength="120" autocomplete="name" value={values.name} /></label>
+        <label class="field"><span>Email <em>*</em></span><input type="email" name="email" required autocomplete="email" value={values.email} /></label>
+        <label class="field"><span>Phone</span><input type="tel" name="phone" maxlength="40" autocomplete="tel" value={values.phone} /></label>
+        <label class="field"><span>Business or organisation</span><input name="organisation" maxlength="160" autocomplete="organization" value={values.organisation} /></label>
+        <label class="field"><span>Service required <em>*</em></span>
+          <select name="service" required>
+            <option value="">Choose a service…</option>
+            {Object.entries(SERVICES).map(([slug, sv]) => <option value={slug} selected={service === slug}>{sv.name}</option>)}
+          </select>
+        </label>
+        <label class="field"><span>Budget range</span>
+          <select name="budget">
+            <option value="">Choose a range…</option>
+            {BUDGETS.map((b) => <option selected={values.budget === b}>{b}</option>)}
+          </select>
+        </label>
+        <label class="field field--full"><span>Project details <em>*</em></span><textarea name="details" rows="6" required maxlength="5000" placeholder="What are you making, who is it for, and when do you need it?">{values.details}</textarea></label>
+        <label class="field"><span>Preferred start date</span><input type="date" name="preferred_start" value={values.preferred_start} /></label>
+      </div>
+      <button class="btn btn--primary" type="submit">Send enquiry <Icon name="send" /></button>
+    </form>
+    <aside class="contact__aside">
+      <img class="split__img" src="/assets/media/hero-camera.jpg" alt="" loading="lazy" />
+      <ul class="contact-list">
+        <li><Icon name="mail" /> {s.company_email}</li>
+        <li><Icon name="phone" /> {s.company_phone}</li>
+        <li><Icon name="map-pin" /> {s.company_address}</li>
+      </ul>
+      <Socials />
+    </aside>
+  </section>
+</PublicLayout>

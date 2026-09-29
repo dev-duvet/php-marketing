@@ -1,0 +1,71 @@
+---
+import Icon from '../../../../components/Icon.astro';
+import PageHead from '../../../../components/PageHead.astro';
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+import { clientScope, isStaff } from '../../../../lib/auth.ts';
+import { CONTENT_STATUSES, PROJECT_STATUSES, serviceName } from '../../../../lib/catalog.ts';
+import { all, one } from '../../../../lib/db.ts';
+import { fmtDate, lines, mediaUrl } from '../../../../lib/format.ts';
+import { int } from '../../../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const staff = isStaff(user);
+const [scope, params] = clientScope(user);
+const project = await one(`SELECT p.*, c.name AS client_name FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = ?${scope}`, [int(Astro.params.id), ...params]);
+if (!project) return Astro.rewrite('/404');
+const [members, items, assets] = await Promise.all([
+  all('SELECT u.name, u.title FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? ORDER BY u.name', [project.id]),
+  all('SELECT * FROM content_items WHERE project_id = ? ORDER BY publish_at', [project.id]),
+  all('SELECT * FROM assets WHERE project_id = ? ORDER BY created_at DESC, id DESC', [project.id]),
+]);
+---
+<AdminLayout title={project.name}>
+  <PageHead heading={project.name} sub={`${project.client_name ?? 'No client'} · ${serviceName(project.service_type) || 'No service set'}`}>
+    {staff && <a class="btn btn--ghost" href={`/admin/projects/${project.id}/edit`}><Icon name="edit" /> Edit project</a>}
+  </PageHead>
+  <div class="dash-grid">
+    <section class="panel dash-grid__wide">
+      <div class="panel__head">
+        <h2>Overview</h2>
+        <span class={`status status--${project.status}`}>{PROJECT_STATUSES[project.status]}</span>
+      </div>
+      <p>{project.description || 'No description yet.'}</p>
+      <dl class="facts">
+        <div><dt>Start</dt><dd>{fmtDate(project.start_date)}</dd></div>
+        <div><dt>Due</dt><dd>{fmtDate(project.due_date)}</dd></div>
+        <div><dt>Progress</dt><dd><span class="progress"><span style={`width: ${Number(project.progress)}%`}></span></span> {project.progress}%</dd></div>
+        <div><dt>Public case study</dt><dd>{project.is_public ? <a href={`/work/${project.slug}`} target="_blank" rel="noopener">Published</a> : 'Hidden'}</dd></div>
+      </dl>
+    </section>
+    <section class="panel">
+      <h2>Team</h2>
+      <ul class="simple-list">
+        {members.map((m) => <li><span>{m.name}</span><span class="muted">{m.title}</span></li>)}
+        {members.length === 0 && <li class="muted">No team members assigned.</li>}
+      </ul>
+    </section>
+    <section class="panel">
+      <h2>Deliverables</h2>
+      <ul class="ticks">{lines(project.deliverables).map((d) => <li>{d}</li>)}</ul>
+    </section>
+    {staff && project.notes && <section class="panel"><h2>Notes</h2><p>{project.notes}</p></section>}
+    <section class="panel dash-grid__wide">
+      <div class="panel__head"><h2>Content</h2>{staff && <a class="link-arrow" href="/admin/content/new">Add content</a>}</div>
+      <ul class="simple-list">
+        {items.map((c) => (
+          <li><a href={staff ? `/admin/content/${c.id}/edit` : `/admin/approvals/${c.id}`}>{c.title}</a><span class={`status status--${c.status}`}>{CONTENT_STATUSES[c.status]}</span></li>
+        ))}
+        {items.length === 0 && <li class="muted">No content for this project yet.</li>}
+      </ul>
+    </section>
+    <section class="panel dash-grid__wide">
+      <div class="panel__head"><h2>Assets</h2><a class="link-arrow" href={`/admin/assets?project=${project.id}`}>Open in library</a></div>
+      <div class="thumb-grid thumb-grid--wide">
+        {assets.map((a) => (
+          <a class="thumb" href={`/admin/assets/${a.id}`}>{a.type === 'image' ? <img src={mediaUrl(a.path)} alt={a.title} loading="lazy" /> : <span class="thumb__file"><Icon name="file" /></span>}</a>
+        ))}
+      </div>
+      {assets.length === 0 && <p class="muted">No assets attached yet.</p>}
+    </section>
+  </div>
+</AdminLayout>

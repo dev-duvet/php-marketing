@@ -1,0 +1,136 @@
+---
+import { CONTENT_STATUSES, FORMATS, PLATFORMS } from '../lib/catalog.ts';
+import { all } from '../lib/db.ts';
+import { mediaUrl } from '../lib/format.ts';
+import { clearOld } from '../lib/forms.ts';
+import { maxUploadMb } from '../lib/upload.ts';
+import Csrf from './Csrf.astro';
+import Icon from './Icon.astro';
+import PageHead from './PageHead.astro';
+
+interface Props {
+  item: Record<string, any> | null;
+}
+const { item } = Astro.props;
+const session = Astro.locals.session;
+const old = session.data.old;
+const v = (key: string, fallback = '') => String(old?.[key] ?? item?.[key] ?? fallback);
+const id = item?.id ?? 0;
+const [platformRows, attached, projects, team, library] = await Promise.all([
+  item ? all('SELECT platform FROM content_platforms WHERE content_id = ?', [id]) : Promise.resolve([{ platform: 'instagram' }]),
+  all('SELECT a.id FROM assets a JOIN content_assets ca ON ca.asset_id = a.id WHERE ca.content_id = ?', [id]),
+  all('SELECT p.id, p.name, c.name AS client_name FROM projects p LEFT JOIN clients c ON c.id = p.client_id ORDER BY p.name'),
+  all("SELECT id, name FROM users WHERE role != 'client' AND is_active = 1 ORDER BY name"),
+  all('SELECT id, title, path, type FROM assets ORDER BY created_at DESC, id DESC LIMIT 40'),
+]);
+const platforms: string[] = old?.platforms ? [].concat(old.platforms) : platformRows.map((r) => r.platform);
+const attachedIds = attached.map((a) => Number(a.id));
+const publish = v('publish_at').replace(' ', 'T').slice(0, 16);
+const status = v('status', 'draft');
+const assigned = v('assigned_to', String(Astro.locals.user!.id));
+const inApproval = item && ['awaiting_approval', 'approved', 'scheduled', 'published'].includes(item.status);
+clearOld(Astro);
+---
+<PageHead heading={item ? 'Edit content' : 'Content editor'} sub={item ? `Version ${item.version} · ${CONTENT_STATUSES[item.status]}` : 'Create and manage your social content.'}>
+  {inApproval && <a class="btn btn--ghost" href={`/admin/approvals/${id}`}><Icon name="check-circle" /> Approval thread</a>}
+</PageHead>
+<form class="panel form content-form" method="post" enctype="multipart/form-data" action={item ? `/admin/content/${id}/edit` : '/admin/content/new'}>
+  <Csrf />
+  <h2>{item ? item.title : 'Create new content'}</h2>
+  <div class="form-grid">
+    <label class="field field--full"><span>Title <em>*</em></span><input name="title" required maxlength="160" placeholder="Enter a content title…" value={v('title')} /></label>
+
+    <label class="field"><span>Client / Project</span>
+      <select name="project_id">
+        <option value="">Select client or project…</option>
+        {projects.map((p) => <option value={p.id} selected={v('project_id') === String(p.id)}>{(p.client_name ? `${p.client_name} — ` : '') + p.name}</option>)}
+      </select>
+    </label>
+
+    <fieldset class="field">
+      <legend>Platforms <em>*</em></legend>
+      <div class="check-grid">
+        {Object.entries(PLATFORMS).map(([key, label]) => (
+          <label class="check"><input type="checkbox" name="platforms[]" value={key} checked={platforms.includes(key)} /> {label}</label>
+        ))}
+      </div>
+    </fieldset>
+
+    <label class="field"><span>Format</span>
+      <select name="format">{FORMATS.map((f) => <option selected={v('format', 'Photo') === f}>{f}</option>)}</select>
+    </label>
+
+    <label class="field"><span>Assigned team member</span>
+      <select name="assigned_to">
+        <option value="">Unassigned</option>
+        {team.map((t) => <option value={t.id} selected={assigned === String(t.id)}>{t.name}</option>)}
+      </select>
+    </label>
+
+    <label class="field field--full">
+      <span class="field__row">Caption <span class="muted small" data-counter-for="caption">0/2200</span></span>
+      <textarea id="caption" name="caption" rows="5" maxlength="2200" placeholder="Write your caption here…" data-counter>{v('caption')}</textarea>
+    </label>
+
+    <div class="field">
+      <span>Attach assets</span>
+      <label class="dropzone" data-dropzone>
+        <Icon name="upload" />
+        <strong>Drag and drop files here</strong>
+        <span class="muted small">or click to browse</span>
+        <input type="file" name="uploads" multiple accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf,.psd,.ai" />
+        <span class="dropzone__files muted small" data-dropzone-files></span>
+      </label>
+      <span class="muted small">Images, videos or design files (max {maxUploadMb()}MB each)</span>
+    </div>
+
+    <div class="field">
+      <label class="field"><span>Publish date &amp; time</span><input type="datetime-local" name="publish_at" value={publish} /></label>
+      <label class="field"><span>Status</span>
+        <select name="status">
+          {Object.entries(CONTENT_STATUSES)
+            .filter(([key]) => key !== 'awaiting_approval' || item?.status === 'awaiting_approval')
+            .map(([key, label]) => <option value={key} selected={status === key}>{label}</option>)}
+        </select>
+      </label>
+    </div>
+
+    <details class="field field--full library-pick" open={attachedIds.length > 0}>
+      <summary>Choose from asset library ({attachedIds.length} attached)</summary>
+      <div class="pick-grid">
+        {library.map((a) => (
+          <label class="pick">
+            <input type="checkbox" name="asset_ids[]" value={a.id} checked={attachedIds.includes(Number(a.id))} />
+            {a.type === 'image' ? <img src={mediaUrl(a.path)} alt="" loading="lazy" /> : <span class="thumb__file"><Icon name="file" /></span>}
+            <span class="pick__title">{a.title}</span>
+          </label>
+        ))}
+      </div>
+      <p class="muted small">Unticking an asset here does not detach it; manage attachments from the asset’s page.</p>
+    </details>
+
+    <label class="field field--full"><span>Internal notes</span><textarea name="internal_notes" rows="3" placeholder="Only visible to the team">{v('internal_notes')}</textarea></label>
+  </div>
+
+  <div class="form-actions">
+    {item && <button class="btn btn--danger-text" type="button" data-open-dialog="delete-content"><Icon name="trash" /> Delete</button>}
+    <span class="spacer"></span>
+    <button class="btn btn--ghost" type="submit" name="action" value="save">Save draft</button>
+    <button class="btn btn--primary" type="submit" name="action" value="submit"><Icon name="send" /> Send for approval</button>
+  </div>
+</form>
+
+{item && (
+  <dialog class="dialog" id="delete-content">
+    <form method="post" action={`/admin/content/${id}/delete`}>
+      <Csrf />
+      <input type="hidden" name="confirm" value="yes" />
+      <h2>Delete “{item.title}”?</h2>
+      <p class="muted">This removes the content item, its comments and approval history. Attached assets stay in the library.</p>
+      <div class="form-actions">
+        <button class="btn btn--ghost" type="button" data-close-dialog>Cancel</button>
+        <button class="btn btn--danger" type="submit">Delete content</button>
+      </div>
+    </form>
+  </dialog>
+)}

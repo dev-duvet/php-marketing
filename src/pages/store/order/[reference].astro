@@ -1,0 +1,28 @@
+---
+import Icon from '../../../components/Icon.astro';
+import PublicLayout from '../../../layouts/PublicLayout.astro';
+import { all, one } from '../../../lib/db.ts';
+import { money } from '../../../lib/format.ts';
+
+const reference = Astro.params.reference ?? '';
+// Only the browser session that placed the order can view its confirmation.
+if (!(Astro.locals.session.data.orders ?? []).includes(reference)) return Astro.rewrite('/404');
+const order = await one('SELECT * FROM orders WHERE reference = ?', [reference]);
+if (!order) return Astro.rewrite('/404');
+const items = await all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', [order.id]);
+---
+<PublicLayout title="Order received">
+  <section class="section container narrow">
+    <div class="card center">
+      <span class="success-mark"><Icon name="check" /></span>
+      <h1>Thank you, {order.customer_name.split(' ')[0]}!</h1>
+      <p class="lead">Your order <strong>{order.reference}</strong> has been received.</p>
+      <p class="muted">Payment integration is coming soon — we’ll email {order.email} with payment details to confirm your order.</p>
+      <ul class="summary-list">
+        {items.map((i) => <li><span>{i.product_name} × {i.quantity}</span><span>{money(Number(i.line_total_cents))}</span></li>)}
+        <li class="summary-list__total"><span>Total</span><strong>{money(Number(order.subtotal_cents))}</strong></li>
+      </ul>
+      <a class="btn btn--navy" href="/store">Back to the store</a>
+    </div>
+  </section>
+</PublicLayout>

@@ -1,0 +1,12 @@
+---
+import { SOCIAL_NETWORKS } from '../lib/catalog.ts';
+import Icon from './Icon.astro';
+
+const settings = Astro.locals.settings;
+const links = Object.entries(SOCIAL_NETWORKS).filter(([key]) => settings[`social_${key}`]);
+---
+<ul class="socials">
+  {links.map(([key, label]) => (
+    <li><a href={settings[`social_${key}`]} target="_blank" rel="noopener noreferrer" aria-label={`CreateZA on ${label}`}><Icon name={key} /></a></li>
+  ))}
+</ul>

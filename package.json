@@ -1,0 +1,28 @@
+{
+  "name": "createza",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CreateZA website and Studio dashboard (Astro, SSR on Vercel)",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "db:fresh": "node scripts/db-fresh.ts",
+    "test": "node --test tests/*.test.ts",
+    "smoke": "node tests/smoke.ts"
+  },
+  "dependencies": {
+    "@astrojs/vercel": "^11.0.11",
+    "astro": "^7.3.5",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^6.0.3"
+  }
+}

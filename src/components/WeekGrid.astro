@@ -1,0 +1,42 @@
+---
+import { CONTENT_STATUSES, PLATFORMS } from '../lib/catalog.ts';
+import type { WeekGrid } from '../lib/dashboard.ts';
+import { addDays, fmtDate, today } from '../lib/format.ts';
+import Icon from './Icon.astro';
+
+interface Props {
+  grid: WeekGrid;
+  weekStart: string;
+}
+const { grid, weekStart } = Astro.props;
+const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+const now = today();
+const staff = Astro.locals.user?.role !== 'client';
+---
+<div class="table-scroll">
+  <table class="week">
+    <thead>
+      <tr>
+        <th scope="col"><span class="sr-only">Platform</span></th>
+        {days.map((d) => <th scope="col" class={d === now ? 'is-today' : ''}>{fmtDate(d, 'dayName')}<small>{fmtDate(d, 'short')}</small></th>)}
+      </tr>
+    </thead>
+    <tbody>
+      {Object.entries(PLATFORMS).map(([key, label]) => (
+        <tr>
+          <th scope="row"><span class={`platform platform--${key}`}><Icon name={key} /></span>{label}</th>
+          {days.map((d) => (
+            <td class={d === now ? 'is-today' : ''}>
+              {(grid[key]?.[d] ?? []).map((item) => (
+                <a class={`slot slot--${item.status}`} href={staff ? `/admin/content/${item.id}/edit` : `/admin/approvals/${item.id}`} title={`${item.title} — ${CONTENT_STATUSES[item.status]}`}>
+                  <strong>{item.format}</strong><span>{fmtDate(item.publish_at, 'time')}</span>
+                </a>
+              ))}
+              {!(grid[key]?.[d]?.length) && <span class="slot-empty" aria-hidden="true">—</span>}
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>

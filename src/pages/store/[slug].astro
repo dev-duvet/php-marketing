@@ -1,0 +1,41 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { one } from '../../lib/db.ts';
+import { mediaUrl, money } from '../../lib/format.ts';
+
+const product = await one('SELECT * FROM products WHERE slug = ? AND is_active = 1', [Astro.params.slug ?? '']);
+if (!product) return Astro.rewrite('/404');
+const stock = Number(product.stock);
+---
+<PublicLayout title={product.name}>
+  <section class="section container split split--top product">
+    <div class="product__img"><img src={mediaUrl(product.image)} alt={product.name} /></div>
+    <div>
+      <a class="link-back" href="/store"><Icon name="chevron-left" /> All products</a>
+      <h1>{product.name}</h1>
+      <p class="price">{money(Number(product.price_cents))}</p>
+      <p class="lead muted">{product.description}</p>
+      {stock > 0 ? (
+        <>
+          <form method="post" action="/store/cart" class="add-to-cart">
+            <Csrf />
+            <input type="hidden" name="action" value="add" />
+            <input type="hidden" name="product_id" value={product.id} />
+            <div class="qty" data-qty>
+              <button type="button" class="qty__btn" data-step="-1" aria-label="Decrease quantity">−</button>
+              <label class="sr-only" for="qty">Quantity</label>
+              <input id="qty" type="number" name="quantity" value="1" min="1" max={Math.min(10, stock)} inputmode="numeric" />
+              <button type="button" class="qty__btn" data-step="1" aria-label="Increase quantity">+</button>
+            </div>
+            <button class="btn btn--primary" type="submit"><Icon name="cart" /> Add to cart</button>
+          </form>
+          <p class="muted small">{stock} in stock</p>
+        </>
+      ) : (
+        <p class="notice">Sold out — check back soon.</p>
+      )}
+    </div>
+  </section>
+</PublicLayout>

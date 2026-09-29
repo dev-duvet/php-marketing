@@ -1,0 +1,51 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { money } from '../../lib/format.ts';
+import { clearOld, handle, oldValue, readForm } from '../../lib/forms.ts';
+import { cartSummary, placeOrder } from '../../lib/shop.ts';
+
+const session = Astro.locals.session;
+const summary = await cartSummary(session.data.cart ?? {});
+if (summary.count === 0) return Astro.redirect('/store/cart');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, '/store/checkout', async () => {
+    const reference = await placeOrder(data, session.data.cart ?? {});
+    session.data.cart = {};
+    (session.data.orders ??= []).push(reference);
+    return Astro.redirect(`/store/order/${reference}`, 303);
+  });
+}
+
+const v = Object.fromEntries(['customer_name', 'email', 'phone', 'address', 'city', 'postal_code'].map((k) => [k, oldValue(Astro, k)]));
+clearOld(Astro);
+---
+<PublicLayout title="Checkout">
+  <section class="section container split split--top">
+    <form class="card form" method="post" action="/store/checkout">
+      <Csrf />
+      <h1>Checkout</h1>
+      <div class="form-grid">
+        <label class="field"><span>Full name <em>*</em></span><input name="customer_name" required autocomplete="name" value={v.customer_name} /></label>
+        <label class="field"><span>Email <em>*</em></span><input type="email" name="email" required autocomplete="email" value={v.email} /></label>
+        <label class="field"><span>Phone</span><input type="tel" name="phone" autocomplete="tel" value={v.phone} /></label>
+        <label class="field field--full"><span>Delivery address <em>*</em></span><input name="address" required autocomplete="street-address" value={v.address} /></label>
+        <label class="field"><span>City <em>*</em></span><input name="city" required autocomplete="address-level2" value={v.city} /></label>
+        <label class="field"><span>Postal code <em>*</em></span><input name="postal_code" required autocomplete="postal-code" value={v.postal_code} /></label>
+      </div>
+      <div class="notice"><Icon name="clock" /> <span><strong>Payment integration coming soon.</strong> Your order is saved and we’ll email payment details to confirm it.</span></div>
+      <button class="btn btn--primary" type="submit">Place order</button>
+    </form>
+    <aside class="card">
+      <h2>Order summary</h2>
+      <ul class="summary-list">
+        {summary.items.map((i) => <li><span>{i.product.name} × {i.quantity}</span><span>{money(i.line)}</span></li>)}
+        <li class="summary-list__total"><span>Subtotal</span><strong>{money(summary.subtotal)}</strong></li>
+      </ul>
+      <a class="link-arrow" href="/store/cart">Edit cart</a>
+    </aside>
+  </section>
+</PublicLayout>

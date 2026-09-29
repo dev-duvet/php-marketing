@@ -1,0 +1,124 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PageHead from '../../components/PageHead.astro';
+import ReachChart from '../../components/ReachChart.astro';
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { logActivity } from '../../lib/app.ts';
+import { FORMATS, PLATFORMS } from '../../lib/catalog.ts';
+import { reachSeries } from '../../lib/dashboard.ts';
+import { all, count, one, run } from '../../lib/db.ts';
+import { fmtDate, today } from '../../lib/format.ts';
+import { done, readForm } from '../../lib/forms.ts';
+
+const user = Astro.locals.user!;
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  const period = String(data.period ?? '');
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    Astro.locals.session.flash('error', 'Choose a valid month.');
+    return Astro.redirect('/admin/analytics', 303);
+  }
+  for (const key of Object.keys(PLATFORMS)) {
+    const num = (f: string) => Math.max(0, Number(data[`${key}_${f}`]) || 0);
+    const format = String(data[`${key}_top_format`] ?? '');
+    await run(
+      `INSERT INTO analytics_metrics (period, platform, posts_published, reach, engagement_rate, top_format) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (period, platform) DO UPDATE SET posts_published = excluded.posts_published, reach = excluded.reach,
+       engagement_rate = excluded.engagement_rate, top_format = excluded.top_format`,
+      [period, key, Math.round(num('posts_published')), Math.round(num('reach')), Math.min(100, num('engagement_rate')), FORMATS.includes(format) ? format : null],
+    );
+  }
+  await logActivity(user.id, 'analytics.updated', `Analytics updated for ${period}`, Astro.locals.ip);
+  return done(Astro, `Analytics saved for ${fmtDate(`${period}-01`, 'monthLongYear')}.`, `/admin/analytics?period=${period}`);
+}
+
+const requested = Astro.url.searchParams.get('period') ?? '';
+const period = /^\d{4}-\d{2}$/.test(requested) ? requested : today().slice(0, 7);
+const [metricRows, totals, formats, published, volume, totalProjects, completed, chart] = await Promise.all([
+  all('SELECT * FROM analytics_metrics WHERE period = ?', [period]),
+  one('SELECT SUM(posts_published) AS posts, SUM(reach) AS reach, AVG(engagement_rate) AS engagement FROM analytics_metrics WHERE period = ?', [period]),
+  all('SELECT top_format, COUNT(*) AS n FROM analytics_metrics WHERE top_format IS NOT NULL GROUP BY top_format ORDER BY n DESC'),
+  count("SELECT COUNT(*) FROM content_items WHERE status = 'published'"),
+  all('SELECT substr(publish_at, 1, 7) AS month, COUNT(*) AS n FROM content_items WHERE publish_at IS NOT NULL GROUP BY substr(publish_at, 1, 7) ORDER BY month DESC LIMIT 6'),
+  count('SELECT COUNT(*) FROM projects'),
+  count("SELECT COUNT(*) FROM projects WHERE status = 'completed'"),
+  reachSeries(),
+]);
+const metrics = Object.fromEntries(metricRows.map((m) => [m.platform, m]));
+const completion = totalProjects ? Math.round((completed / totalProjects) * 100) : 0;
+const maxVolume = Math.max(1, ...volume.map((v) => Number(v.n)));
+---
+<AdminLayout title="Analytics">
+  <PageHead heading="Analytics" sub="Manual monthly figures for the MVP. Seeded values are demo data — replace them with numbers from each platform’s insights." />
+  <div class="stat-grid">
+    <div class="stat"><span class="stat__icon stat__icon--green"><Icon name="check-circle" /></span><span><span class="stat__label">Content published (all time)</span><strong class="stat__value">{published}</strong></span></div>
+    <div class="stat"><span class="stat__icon stat__icon--blue"><Icon name="users" /></span><span><span class="stat__label">Reach · {fmtDate(`${period}-01`, 'monthYear')}</span><strong class="stat__value">{Number(totals?.reach ?? 0).toLocaleString('en-ZA')}</strong></span></div>
+    <div class="stat"><span class="stat__icon stat__icon--gold"><Icon name="chart" /></span><span><span class="stat__label">Avg. engagement rate</span><strong class="stat__value">{Number(totals?.engagement ?? 0).toFixed(1)}%</strong></span></div>
+    <div class="stat"><span class="stat__icon stat__icon--red"><Icon name="folder" /></span><span><span class="stat__label">Project completion rate</span><strong class="stat__value">{completion}%</strong></span></div>
+  </div>
+
+  <div class="dash-grid">
+    <section class="panel dash-grid__wide">
+      <div class="panel__head"><h2>Platform reach</h2><span class="muted small">Last 6 months</span></div>
+      <ReachChart chart={chart} />
+    </section>
+    <section class="panel">
+      <h2>Best-performing formats</h2>
+      <ul class="simple-list">
+        {formats.map((f) => <li><span>{f.top_format}</span><span class="muted">top on {f.n} platform-months</span></li>)}
+        {formats.length === 0 && <li class="muted">No data yet.</li>}
+      </ul>
+    </section>
+    <section class="panel">
+      <h2>Monthly content volume</h2>
+      <ul class="bars">
+        {[...volume].reverse().map((row) => (
+          <li><span>{fmtDate(`${row.month}-01`, 'monthYear')}</span><span class="bars__track"><span style={`width: ${Math.round((Number(row.n) / maxVolume) * 100)}%`}></span></span><strong>{row.n}</strong></li>
+        ))}
+      </ul>
+      <p class="muted small">Counted from scheduled content in the calendar.</p>
+    </section>
+
+    <section class="panel dash-grid__wide">
+      <div class="panel__head">
+        <h2>Edit monthly figures</h2>
+        <form method="get" action="/admin/analytics" class="inline-form">
+          <label class="sr-only" for="period">Month</label>
+          <input id="period" type="month" name="period" value={period} />
+          <button class="btn btn--ghost btn--sm" type="submit">Load</button>
+        </form>
+      </div>
+      <form method="post" action="/admin/analytics">
+        <Csrf />
+        <input type="hidden" name="period" value={period} />
+        <div class="table-scroll">
+          <table class="table table--inputs">
+            <thead><tr><th>Platform</th><th>Posts published</th><th>Reach</th><th>Engagement rate (%)</th><th>Top format</th></tr></thead>
+            <tbody>
+              {Object.entries(PLATFORMS).map(([key, label]) => {
+                const m = metrics[key] ?? {};
+                return (
+                  <tr>
+                    <th scope="row"><span class={`platform platform--${key}`}><Icon name={key} /></span> {label}</th>
+                    <td><input type="number" min="0" name={`${key}_posts_published`} value={m.posts_published ?? 0} aria-label={`${label} posts published`} /></td>
+                    <td><input type="number" min="0" name={`${key}_reach`} value={m.reach ?? 0} aria-label={`${label} reach`} /></td>
+                    <td><input type="number" min="0" max="100" step="0.1" name={`${key}_engagement_rate`} value={m.engagement_rate ?? 0} aria-label={`${label} engagement rate`} /></td>
+                    <td>
+                      <select name={`${key}_top_format`} aria-label={`${label} top format`}>
+                        <option value="">—</option>
+                        {FORMATS.map((f) => <option selected={m.top_format === f}>{f}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div class="form-actions"><span class="spacer"></span><button class="btn btn--primary" type="submit">Save {fmtDate(`${period}-01`, 'monthLongYear')}</button></div>
+      </form>
+    </section>
+  </div>
+</AdminLayout>

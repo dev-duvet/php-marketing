@@ -1,0 +1,65 @@
+---
+import BrandVars from '../../components/BrandVars.astro';
+import Csrf from '../../components/Csrf.astro';
+import Flash from '../../components/Flash.astro';
+import Icon from '../../components/Icon.astro';
+import IconSprite from '../../components/IconSprite.astro';
+import { logActivity } from '../../lib/app.ts';
+import { attemptLogin } from '../../lib/auth.ts';
+import { mediaUrl } from '../../lib/format.ts';
+import { clearOld, oldValue, readForm } from '../../lib/forms.ts';
+
+const session = Astro.locals.session;
+if (Astro.locals.user && Astro.request.method === 'GET') return Astro.redirect('/admin');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  const result = await attemptLogin(String(data.email ?? ''), String(data.password ?? ''), Astro.locals.ip);
+  if (!result.user) {
+    session.remember({ email: data.email });
+    session.flash('error', result.error!);
+    return Astro.redirect('/admin/login', 303);
+  }
+  const intended = session.data.intended;
+  await session.regenerate();
+  delete session.data.intended;
+  session.data.userId = result.user.id;
+  await logActivity(result.user.id, 'auth.login', 'Signed in', Astro.locals.ip);
+  return Astro.redirect(intended && intended.startsWith('/admin') ? intended : '/admin', 303);
+}
+
+const email = oldValue(Astro, 'email');
+clearOld(Astro);
+const logo = mediaUrl(Astro.locals.settings.logo_path || 'assets/brand/createza-logo.jpg');
+---
+<!doctype html>
+<html lang="en-ZA">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sign in — CreateZA Studio</title>
+  <link rel="icon" href="/assets/brand/createza-logo.jpg" />
+  <link rel="stylesheet" href="/assets/css/app.css" />
+  <link rel="stylesheet" href="/assets/css/admin.css" />
+  <BrandVars />
+</head>
+<body class="auth">
+  <IconSprite />
+  <main id="main" class="auth__main">
+    <div class="auth-card">
+      <img class="auth-card__logo" src={logo} alt="CreateZA" width="88" height="88" />
+      <h1>CreateZA Studio</h1>
+      <p class="muted">Sign in to manage content, projects and leads.</p>
+      <Flash />
+      <form class="form" method="post" action="/admin/login">
+        <Csrf />
+        <label class="field"><span>Email</span><input type="email" name="email" required autocomplete="username" autofocus value={email} /></label>
+        <label class="field"><span>Password</span><input type="password" name="password" required autocomplete="current-password" /></label>
+        <button class="btn btn--primary btn--block" type="submit">Sign in</button>
+      </form>
+      <a class="link-back" href="/"><Icon name="chevron-left" /> Back to website</a>
+    </div>
+  </main>
+</body>
+</html>

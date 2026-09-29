@@ -1,0 +1,158 @@
+---
+import Csrf from '../../../components/Csrf.astro';
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { clientScope, isStaff } from '../../../lib/auth.ts';
+import { CONTENT_STATUSES, PLATFORMS } from '../../../lib/catalog.ts';
+import { commentOnContent, reviewContent } from '../../../lib/content.ts';
+import { all, one } from '../../../lib/db.ts';
+import { fmtDate, lines, mediaUrl, timeAgo } from '../../../lib/format.ts';
+import { done, handle, readForm } from '../../../lib/forms.ts';
+import { int, str } from '../../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const id = int(Astro.params.id);
+const [scope, params] = clientScope(user);
+const item = await one(
+  `SELECT c.*, p.name AS project_name FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE c.id = ?${scope}`,
+  [id, ...params],
+);
+if (!item) return Astro.rewrite('/404');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  const back = `/admin/approvals/${id}`;
+  return handle(Astro, data, back, async () => {
+    if (data.action === 'comment') {
+      await commentOnContent(id, user.id, str(data.body));
+      return Astro.redirect(`${back}#comments`, 303);
+    }
+    await reviewContent(id, str(data.decision), user.id, str(data.note));
+    return done(Astro, data.decision === 'approved' ? 'Approved — the team can now schedule it.' : 'Changes requested. The team has been notified in the thread.', back);
+  });
+}
+
+const [queue, assets, platforms, comments, history] = await Promise.all([
+  all(
+    `SELECT c.id, c.title, c.format, c.publish_at FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE c.status = 'awaiting_approval'${scope} ORDER BY c.publish_at`,
+    params,
+  ),
+  all('SELECT a.* FROM assets a JOIN content_assets ca ON ca.asset_id = a.id WHERE ca.content_id = ? ORDER BY a.id', [id]),
+  all('SELECT platform FROM content_platforms WHERE content_id = ?', [id]),
+  all('SELECT cc.*, u.name, u.role FROM content_comments cc LEFT JOIN users u ON u.id = cc.user_id WHERE cc.content_id = ? ORDER BY cc.created_at, cc.id', [id]),
+  all('SELECT ca.*, u.name FROM content_approvals ca LEFT JOIN users u ON u.id = ca.user_id WHERE ca.content_id = ? ORDER BY ca.created_at DESC, ca.id DESC', [id]),
+]);
+const preview = assets[0];
+const actionLabels: Record<string, string> = { submitted: 'Sent for approval', approved: 'Approved', changes_requested: 'Changes requested' };
+const snapshot = (raw: string | null) => {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+---
+<AdminLayout title="Approvals">
+  <PageHead heading="Approvals" sub="Review, comment and approve production content." />
+  <div class="approval">
+    <section class="panel approval__main">
+      <div class="preview">
+        {!preview ? (
+          <div class="preview__empty"><Icon name="image" /><span>No asset attached</span></div>
+        ) : preview.type === 'video' ? (
+          <video src={mediaUrl(preview.path)} controls preload="metadata"></video>
+        ) : preview.type === 'image' ? (
+          <img src={mediaUrl(preview.path)} alt={preview.title} />
+        ) : (
+          <a class="preview__empty" href={mediaUrl(preview.path)} target="_blank" rel="noopener"><Icon name="file" /><span>Open {preview.title}</span></a>
+        )}
+      </div>
+      <div class="approval__meta">
+        <div>
+          <h2>{item.title}</h2>
+          <p class="muted small">{item.format} · v{item.version} · {item.project_name ?? 'No project'} · Publishing {fmtDate(item.publish_at, 'shortTime')}</p>
+          <p class="platform-row">{platforms.map((p) => <span class={`platform platform--${p.platform}`} title={PLATFORMS[p.platform]}><Icon name={p.platform} /></span>)}</p>
+        </div>
+        <span class={`status status--${item.status}`}>{CONTENT_STATUSES[item.status]}</span>
+      </div>
+      {item.caption && <div class="caption-box">{lines(item.caption).map((l) => <p>{l}</p>)}</div>}
+      {assets.length > 1 && (
+        <div class="thumb-row">
+          {assets.map((a) => (
+            <a class="thumb" href={`/admin/assets/${a.id}`}>{a.type === 'image' ? <img src={mediaUrl(a.path)} alt={a.title} /> : <span class="thumb__file"><Icon name="file" /></span>}</a>
+          ))}
+        </div>
+      )}
+
+      {item.status === 'awaiting_approval' ? (
+        <form class="approval-actions" method="post" action={`/admin/approvals/${id}`}>
+          <Csrf />
+          <strong>Approval actions</strong>
+          <label class="field field--grow"><span class="sr-only">Note (required when requesting changes)</span>
+            <input name="note" maxlength="2000" placeholder="Add a note (required when requesting changes)" />
+          </label>
+          <button class="btn btn--ghost" type="submit" name="decision" value="changes_requested"><Icon name="message" /> Request changes</button>
+          <button class="btn btn--primary" type="submit" name="decision" value="approved"><Icon name="check" /> Approve</button>
+        </form>
+      ) : isStaff(user) ? (
+        <p class="notice"><a href={`/admin/content/${id}/edit`}>Edit this content</a>&nbsp;and send it for approval to start a new review round.</p>
+      ) : null}
+    </section>
+
+    <section class="panel approval__side" data-tabs>
+      <div class="tabs" role="tablist">
+        <button role="tab" type="button" aria-selected="true" aria-controls="tab-comments" id="t-comments">Comments</button>
+        <button role="tab" type="button" aria-selected="false" aria-controls="tab-history" id="t-history" tabindex="-1">Version history</button>
+      </div>
+      <div role="tabpanel" id="tab-comments" aria-labelledby="t-comments">
+        <ul class="comments" id="comments">
+          {comments.map((c) => (
+            <li>
+              <span class={`avatar avatar--${c.role ?? 'team'}`}>{(c.name ?? '?').slice(0, 1)}</span>
+              <div>
+                <strong>{c.name ?? 'Former user'}</strong> <span class="muted small">{timeAgo(c.created_at)} · v{c.version}</span>
+                <p>{c.body}</p>
+              </div>
+            </li>
+          ))}
+          {comments.length === 0 && <li class="muted">No comments yet.</li>}
+        </ul>
+        <form class="comment-form" method="post" action={`/admin/approvals/${id}`}>
+          <Csrf />
+          <input type="hidden" name="action" value="comment" />
+          <label class="sr-only" for="comment-body">Add a comment</label>
+          <input id="comment-body" name="body" required maxlength="2000" placeholder="Add a comment…" />
+          <button class="icon-btn" type="submit" aria-label="Post comment"><Icon name="send" /></button>
+        </form>
+      </div>
+      <div role="tabpanel" id="tab-history" aria-labelledby="t-history" hidden>
+        <ol class="timeline">
+          {history.map((h) => {
+            const snap = snapshot(h.snapshot);
+            return (
+              <li class={`timeline__item timeline__item--${h.action}`}>
+                <strong>{actionLabels[h.action]}</strong> · v{h.version}
+                <span class="muted small block">{h.name ?? 'Former user'} · {fmtDate(h.created_at, 'shortTime')}</span>
+                {h.note && <p>{h.note}</p>}
+                {snap && <details><summary>Snapshot</summary><p class="small"><strong>{snap.title}</strong><br />{snap.caption}</p></details>}
+              </li>
+            );
+          })}
+          {history.length === 0 && <li class="muted">No approval activity yet.</li>}
+        </ol>
+      </div>
+    </section>
+  </div>
+
+  {queue.length > 1 && (
+    <section class="panel">
+      <h2>Awaiting approval ({queue.length})</h2>
+      <ul class="simple-list">
+        {queue.map((q) => (
+          <li class={Number(q.id) === id ? 'is-current' : ''}><a href={`/admin/approvals/${q.id}`}>{q.title}</a><span class="muted">{q.format} · {fmtDate(q.publish_at, 'short')}</span></li>
+        ))}
+      </ul>
+    </section>
+  )}
+</AdminLayout>

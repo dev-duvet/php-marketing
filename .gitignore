@@ -1,10 +1,11 @@
+node_modules/
+dist/
+.vercel/
+.astro/
 .env
-/storage/*.sqlite
-/storage/logs/*
-!/storage/logs/.gitkeep
-/public/uploads/*
-!/public/uploads/.htaccess
-!/public/uploads/.gitkeep
+.env.*
+!.env.example
+storage/
 /.claude/launch.json
 .DS_Store
 Thumbs.db

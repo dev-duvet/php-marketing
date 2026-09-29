@@ -1,0 +1,11 @@
+---
+import Icon from './Icon.astro';
+
+const flashes = Astro.locals.session.takeFlashes();
+---
+{flashes.map((f) => (
+  <div class={`alert alert--${f.type}`} role={f.type === 'error' ? 'alert' : 'status'}>
+    <Icon name={f.type === 'error' ? 'close' : 'check'} />
+    <span>{f.message}</span>
+  </div>
+))}

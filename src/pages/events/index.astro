@@ -1,0 +1,30 @@
+---
+import EventCard from '../../components/EventCard.astro';
+import PageHero from '../../components/PageHero.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { all } from '../../lib/db.ts';
+import { fmtDate } from '../../lib/format.ts';
+import { EVENT_WITH_COUNTS } from '../../lib/shop.ts';
+
+const [upcoming, past] = await Promise.all([
+  all(`${EVENT_WITH_COUNTS} WHERE starts_at >= now_local() ORDER BY starts_at`),
+  all(`${EVENT_WITH_COUNTS} WHERE starts_at < now_local() ORDER BY starts_at DESC`),
+]);
+---
+<PublicLayout title="Events">
+  <PageHero eyebrow="Events" heading="Upcoming events" intro="Creative meetups, shoots, workshops and community events." />
+  <section class="section container section--tight">
+    <div class="grid grid--3">
+      {upcoming.map((event) => <EventCard event={event} />)}
+    </div>
+    {upcoming.length === 0 && <p class="muted">No upcoming events right now — check back soon.</p>}
+  </section>
+  {past.length > 0 && (
+    <section class="section container">
+      <h2>Event archive</h2>
+      <ul class="archive-list">
+        {past.map((e) => <li><a href={`/events/${e.slug}`}><strong>{e.title}</strong></a><span class="muted">{fmtDate(e.starts_at)} · {e.location}</span></li>)}
+      </ul>
+    </section>
+  )}
+</PublicLayout>

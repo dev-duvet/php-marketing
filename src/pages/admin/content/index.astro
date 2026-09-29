@@ -1,0 +1,81 @@
+---
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import WeekGrid from '../../../components/WeekGrid.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { clientScope, isStaff } from '../../../lib/auth.ts';
+import { CONTENT_STATUSES, PLATFORMS } from '../../../lib/catalog.ts';
+import { weekGrid } from '../../../lib/dashboard.ts';
+import { all, groupConcat } from '../../../lib/db.ts';
+import { addDays, fmtDate, isValidDate, mondayOf } from '../../../lib/format.ts';
+
+const user = Astro.locals.user!;
+const staff = isStaff(user);
+const week = Astro.url.searchParams.get('week') ?? '';
+const weekStart = mondayOf(/^\d{4}-\d{2}-\d{2}$/.test(week) && isValidDate(week) ? week : undefined);
+const status = Astro.url.searchParams.get('status') ?? '';
+const filter = CONTENT_STATUSES[status] ? ' AND c.status = ?' : '';
+const [scope, params] = clientScope(user);
+const [grid, items] = await Promise.all([
+  weekGrid(user, weekStart),
+  all(
+    `SELECT c.*, p.name AS project_name, u.name AS assignee,
+            (SELECT ${groupConcat('platform')} FROM content_platforms WHERE content_id = c.id) AS platforms
+     FROM content_items c LEFT JOIN projects p ON p.id = c.project_id LEFT JOIN users u ON u.id = c.assigned_to
+     WHERE 1=1${scope}${filter} ORDER BY c.publish_at IS NULL, c.publish_at`,
+    filter ? [...params, status] : params,
+  ),
+]);
+---
+<AdminLayout title="Content calendar">
+  <PageHead heading="Content calendar" sub="Plan, produce and schedule content across every platform.">
+    {staff && <a class="btn btn--primary" href="/admin/content/new"><Icon name="plus" /> New content</a>}
+  </PageHead>
+  <section class="panel">
+    <div class="panel__head">
+      <div class="week-nav">
+        <a class="icon-btn" href={`/admin/content?week=${addDays(weekStart, -7)}`} aria-label="Previous week"><Icon name="chevron-left" /></a>
+        <a class="icon-btn" href={`/admin/content?week=${addDays(weekStart, 7)}`} aria-label="Next week"><Icon name="chevron-right" /></a>
+        <h2>{fmtDate(weekStart, 'short')} – {fmtDate(addDays(weekStart, 6), 'dateShort')}</h2>
+      </div>
+      <a class="btn btn--ghost btn--sm" href="/admin/content">This week</a>
+    </div>
+    <WeekGrid grid={grid} weekStart={weekStart} />
+    <ul class="legend legend--status">
+      {Object.entries(CONTENT_STATUSES).map(([key, label]) => <li><i class={`slot slot--${key} legend__swatch`}></i>{label}</li>)}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <div class="panel__head">
+      <h2>All content</h2>
+      <nav class="filters filters--sm" aria-label="Filter by status">
+        <a class={`filter ${status === '' ? 'is-active' : ''}`} href={`/admin/content?week=${weekStart}`}>All</a>
+        {Object.entries(CONTENT_STATUSES).map(([key, label]) => (
+          <a class={`filter ${status === key ? 'is-active' : ''}`} href={`/admin/content?status=${key}&week=${weekStart}`}>{label}</a>
+        ))}
+      </nav>
+    </div>
+    <div class="table-scroll">
+      <table class="table">
+        <thead><tr><th>Title</th><th>Platforms</th><th>Format</th><th>Publish</th><th>Assigned</th><th>Status</th></tr></thead>
+        <tbody>
+          {items.map((item) => (
+            <tr>
+              <td>
+                <a href={staff ? `/admin/content/${item.id}/edit` : `/admin/approvals/${item.id}`}><strong>{item.title}</strong></a>
+                <span class="muted small block">{item.project_name ?? 'No project'}</span>
+              </td>
+              <td class="platform-row">{String(item.platforms ?? '').split(',').filter(Boolean).map((pl) => <span class={`platform platform--${pl}`} title={PLATFORMS[pl]}><Icon name={pl} /></span>)}</td>
+              <td>{item.format}</td>
+              <td>{fmtDate(item.publish_at, 'shortTime')}</td>
+              <td class="muted">{item.assignee ?? '—'}</td>
+              <td><span class={`status status--${item.status}`}>{CONTENT_STATUSES[item.status]}</span></td>
+            </tr>
+          ))}
+          {items.length === 0 && <tr><td colspan="6" class="muted">No content matches this filter.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</AdminLayout>

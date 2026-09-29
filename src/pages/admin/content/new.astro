@@ -1,0 +1,10 @@
+---
+import ContentForm from '../../../components/ContentForm.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { handleContentPost } from '../../../lib/contentForm.ts';
+
+if (Astro.request.method === 'POST') return handleContentPost(Astro, null);
+---
+<AdminLayout title="Content editor">
+  <ContentForm item={null} />
+</AdminLayout>

@@ -1,9 +1,0 @@
-.git
-.claude
-.env
-tests
-storage/*.sqlite*
-storage/logs/*.log
-public/uploads/*
-!public/uploads/.htaccess
-!public/uploads/.gitkeep

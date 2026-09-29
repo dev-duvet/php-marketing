@@ -1,0 +1,4 @@
+---
+const token = Astro.locals.session.csrfToken();
+---
+<input type="hidden" name="_token" value={token} />

@@ -1,0 +1,22 @@
+---
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { clientScope } from '../../../lib/auth.ts';
+import { one } from '../../../lib/db.ts';
+
+const [scope, params] = clientScope(Astro.locals.user);
+const first = await one(
+  `SELECT c.id FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE c.status = 'awaiting_approval'${scope} ORDER BY c.publish_at LIMIT 1`,
+  params,
+);
+if (first) return Astro.redirect(`/admin/approvals/${first.id}`);
+---
+<AdminLayout title="Approvals">
+  <PageHead heading="Approvals" sub="Review, comment and approve production content." />
+  <section class="panel center">
+    <span class="success-mark"><Icon name="check" /></span>
+    <h2>You’re all caught up</h2>
+    <p class="muted">Nothing is waiting for approval right now.</p>
+  </section>
+</AdminLayout>

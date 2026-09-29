@@ -1,0 +1,136 @@
+---
+import Csrf from '../../../components/Csrf.astro';
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { logActivity } from '../../../lib/app.ts';
+import { syncTags } from '../../../lib/assets.ts';
+import { clientScope, isStaff } from '../../../lib/auth.ts';
+import { all } from '../../../lib/db.ts';
+import { extension, humanSize, mediaUrl } from '../../../lib/format.ts';
+import { readForm } from '../../../lib/forms.ts';
+import { createAsset, filesFrom, maxUploadMb } from '../../../lib/upload.ts';
+import { int, str } from '../../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const session = Astro.locals.session;
+
+if (Astro.request.method === 'POST') {
+  const { form, data } = await readForm(Astro);
+  const files = filesFrom(form, 'files');
+  if (!files.length) {
+    session.flash('error', 'Choose at least one file to upload.');
+    return Astro.redirect('/admin/assets', 303);
+  }
+  const projectId = str(data.project_id) ? int(data.project_id) : null;
+  let saved = 0;
+  for (const file of files) {
+    try {
+      const id = await createAsset(file, projectId, user.id);
+      await syncTags(id, str(data.tags));
+      saved++;
+    } catch (err) {
+      session.flash('error', `${file.name}: ${(err as Error).message}`);
+    }
+  }
+  if (saved) {
+    await logActivity(user.id, 'asset.uploaded', `${saved} asset(s) uploaded`, Astro.locals.ip);
+    session.flash('success', `${saved} file(s) uploaded.`);
+  }
+  return Astro.redirect('/admin/assets', 303);
+}
+
+const q = Astro.url.searchParams;
+const filters = { q: q.get('q') ?? '', type: q.get('type') ?? '', project: q.get('project') ?? '', tag: q.get('tag') ?? '' };
+const [scope, scopeParams] = clientScope(user);
+let where = `1=1${scope}`;
+const params: (string | number)[] = [...scopeParams];
+if (filters.q) {
+  where += ' AND LOWER(a.title) LIKE ?';
+  params.push(`%${filters.q.toLowerCase()}%`);
+}
+if (['image', 'video', 'design', 'document'].includes(filters.type)) {
+  where += ' AND a.type = ?';
+  params.push(filters.type);
+}
+if (filters.project) {
+  where += ' AND a.project_id = ?';
+  params.push(int(filters.project));
+}
+if (filters.tag) {
+  where += ' AND a.id IN (SELECT m.asset_id FROM asset_tag_map m JOIN asset_tags t ON t.id = m.tag_id WHERE t.name = ?)';
+  params.push(filters.tag);
+}
+const [assets, projects, tags] = await Promise.all([
+  all(`SELECT a.*, p.name AS project_name FROM assets a LEFT JOIN projects p ON p.id = a.project_id WHERE ${where} ORDER BY a.created_at DESC, a.id DESC`, params),
+  all(`SELECT p.id, p.name FROM projects p WHERE 1=1${scope} ORDER BY p.name`, scopeParams),
+  all('SELECT name FROM asset_tags ORDER BY name'),
+]);
+const types: [string, string][] = [['', 'All'], ['image', 'Photos'], ['video', 'Videos'], ['design', 'Designs'], ['document', 'Documents']];
+const link = (change: Record<string, string>) => {
+  const merged = { ...filters, ...change };
+  const qs = new URLSearchParams(Object.entries(merged).filter(([, v]) => v !== ''));
+  return `/admin/assets${qs.size ? `?${qs}` : ''}`;
+};
+---
+<AdminLayout title="Asset library">
+  <PageHead heading="Asset library" sub="Store, organise and reuse your media assets." />
+  {isStaff(user) && (
+    <details class="panel upload-panel" open={assets.length === 0}>
+      <summary class="btn btn--primary btn--sm"><Icon name="upload" /> Upload assets</summary>
+      <form class="form upload-form" method="post" action="/admin/assets" enctype="multipart/form-data">
+        <Csrf />
+        <label class="dropzone" data-dropzone>
+          <Icon name="upload" />
+          <strong>Drag and drop files here</strong>
+          <span class="muted small">JPG, PNG, WEBP, GIF, MP4, WEBM, MOV, PDF, PSD or AI · max {maxUploadMb()}MB each</span>
+          <input type="file" name="files" multiple required accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf,.psd,.ai" />
+          <span class="dropzone__files muted small" data-dropzone-files></span>
+        </label>
+        <div class="form-grid">
+          <label class="field"><span>Project</span>
+            <select name="project_id"><option value="">No project</option>{projects.map((p) => <option value={p.id}>{p.name}</option>)}</select>
+          </label>
+          <label class="field"><span>Tags (comma separated)</span><input name="tags" maxlength="200" placeholder="studio, portrait" /></label>
+        </div>
+        <button class="btn btn--primary" type="submit">Upload</button>
+      </form>
+    </details>
+  )}
+
+  <section class="panel">
+    <form class="toolbar" method="get" action="/admin/assets">
+      <label class="search-field"><Icon name="search" /><span class="sr-only">Search assets</span><input type="search" name="q" value={filters.q} placeholder="Search assets…" /></label>
+      <label class="sr-only" for="project-filter">Project</label>
+      <select id="project-filter" name="project" data-autosubmit>
+        <option value="">All projects</option>
+        {projects.map((p) => <option value={p.id} selected={filters.project === String(p.id)}>{p.name}</option>)}
+      </select>
+      <label class="sr-only" for="tag-filter">Tag</label>
+      <select id="tag-filter" name="tag" data-autosubmit>
+        <option value="">All tags</option>
+        {tags.map((t) => <option selected={filters.tag === t.name}>{t.name}</option>)}
+      </select>
+      {filters.type && <input type="hidden" name="type" value={filters.type} />}
+      <button class="btn btn--ghost btn--sm" type="submit">Apply</button>
+    </form>
+    <nav class="tabs tabs--links" aria-label="File type">
+      {types.map(([key, label]) => <a href={link({ type: key })} class={filters.type === key ? 'is-active' : ''}>{label}</a>)}
+      <span class="spacer"></span><span class="muted small">{assets.length} assets</span>
+    </nav>
+    <div class="asset-grid">
+      {assets.map((a) => (
+        <a class="asset" href={`/admin/assets/${a.id}`}>
+          <span class="asset__media">
+            {a.type === 'image' ? <img src={mediaUrl(a.path)} alt="" loading="lazy" />
+              : a.type === 'video' ? <><video src={mediaUrl(a.path)} muted preload="metadata"></video><span class="media-card__play"><Icon name="play" /></span></>
+              : <span class="thumb__file"><Icon name="file" /></span>}
+          </span>
+          <strong class="asset__title">{a.title}</strong>
+          <span class="muted small">{extension(a.path)} · {humanSize(Number(a.size))}{a.project_name ? ` · ${a.project_name}` : ''}</span>
+        </a>
+      ))}
+    </div>
+    {assets.length === 0 && <p class="muted">No assets match these filters.</p>}
+  </section>
+</AdminLayout>

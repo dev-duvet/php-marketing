@@ -1,0 +1,163 @@
+---
+import Icon from '../../components/Icon.astro';
+import ReachChart from '../../components/ReachChart.astro';
+import WeekGrid from '../../components/WeekGrid.astro';
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { clientScope, isStaff } from '../../lib/auth.ts';
+import { LEAD_STATUSES, PROJECT_STATUSES } from '../../lib/catalog.ts';
+import { reachSeries, weekGrid } from '../../lib/dashboard.ts';
+import { all, count } from '../../lib/db.ts';
+import { addDays, fmtDate, mediaUrl, mondayOf, money } from '../../lib/format.ts';
+
+const user = Astro.locals.user!;
+const staff = isStaff(user);
+const [scope, params] = clientScope(user);
+const weekStart = mondayOf();
+const contentCount = (where: string, extra: (string | number)[] = []) =>
+  count(`SELECT COUNT(*) FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE ${where}${scope}`, [...extra, ...params]);
+
+const [drafts, awaiting, scheduled, activeProjects, week, attention, projects, assets, pipelineRows, chart, orders, registrations] = await Promise.all([
+  contentCount("c.status IN ('idea','draft','in_production')"),
+  contentCount("c.status = 'awaiting_approval'"),
+  contentCount("c.publish_at >= ? AND c.publish_at < ? AND c.status IN ('approved','scheduled')", [weekStart, addDays(weekStart, 7)]),
+  count(`SELECT COUNT(*) FROM projects p WHERE p.status IN ('planning','in_progress','in_review')${scope}`, params),
+  weekGrid(user, weekStart),
+  all(
+    `SELECT c.*, (SELECT a.path FROM assets a JOIN content_assets ca ON ca.asset_id = a.id WHERE ca.content_id = c.id LIMIT 1) AS thumb
+     FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE c.status = 'awaiting_approval'${scope} ORDER BY c.publish_at LIMIT 4`,
+    params,
+  ),
+  all(`SELECT p.*, cl.name AS client_name FROM projects p LEFT JOIN clients cl ON cl.id = p.client_id WHERE p.status != 'completed'${scope} ORDER BY p.due_date LIMIT 5`, params),
+  all(`SELECT a.* FROM assets a LEFT JOIN projects p ON p.id = a.project_id WHERE 1=1${scope} ORDER BY a.created_at DESC, a.id DESC LIMIT 6`, params),
+  staff ? all('SELECT status, COUNT(*) AS n FROM leads GROUP BY status') : Promise.resolve([]),
+  reachSeries(),
+  staff ? all('SELECT * FROM orders ORDER BY created_at DESC LIMIT 5') : Promise.resolve([]),
+  staff ? all('SELECT r.*, e.title AS event_title FROM event_registrations r JOIN events e ON e.id = r.event_id ORDER BY r.created_at DESC LIMIT 5') : Promise.resolve([]),
+]);
+const pipeline = Object.fromEntries(pipelineRows.map((r) => [r.status, Number(r.n)]));
+const hour = new Date().getHours();
+const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+const cards: [string, number, string, string, string][] = [
+  ['Drafts', drafts, 'file', 'blue', '/admin/content?status=draft'],
+  ['Awaiting approval', awaiting, 'clock', 'gold', '/admin/approvals'],
+  ['Scheduled this week', scheduled, 'calendar', 'green', '/admin/content'],
+  ['Active projects', activeProjects, 'folder', 'red', '/admin/projects'],
+];
+---
+<AdminLayout title="Overview">
+  <div class="page-head">
+    <div>
+      <h1>{greeting}, {user.name.split(' ')[0]}.</h1>
+      <p class="muted">Here’s what’s happening with your content and projects.</p>
+    </div>
+  </div>
+
+  <div class="stat-grid">
+    {cards.map(([label, value, icon, tone, href]) => (
+      <a class="stat" href={href}>
+        <span class={`stat__icon stat__icon--${tone}`}><Icon name={icon} /></span>
+        <span><span class="stat__label">{label}</span><strong class="stat__value">{value}</strong></span>
+        <Icon name="chevron-right" class="icon stat__chev" />
+      </a>
+    ))}
+  </div>
+
+  <div class="dash-grid">
+    <section class="panel dash-grid__wide">
+      <div class="panel__head">
+        <h2>Content calendar</h2>
+        <span class="muted small">{fmtDate(weekStart, 'short')} – {fmtDate(addDays(weekStart, 6), 'dateShort')}</span>
+        <a class="link-arrow" href="/admin/content">View calendar</a>
+      </div>
+      <WeekGrid grid={week} weekStart={weekStart} />
+    </section>
+
+    <section class="panel">
+      <div class="panel__head"><h2>Needs your attention</h2><a class="link-arrow" href="/admin/approvals">View all</a></div>
+      {attention.length === 0 && <p class="muted">Nothing waiting on you. Nice.</p>}
+      <ul class="attention">
+        {attention.map((item, i) => (
+          <li>
+            <img src={mediaUrl(item.thumb)} alt="" width="72" height="72" loading="lazy" />
+            <div>
+              <span class={`chip ${i === 0 ? 'chip--red' : 'chip--gold'}`}>{i === 0 ? 'High priority' : 'Needs review'}</span>
+              <strong>{item.title}</strong>
+              <span class="muted small">Publishing {fmtDate(item.publish_at, 'shortTime')}</span>
+              <a class="btn btn--navy btn--xs" href={`/admin/approvals/${item.id}`}>Review</a>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <section class="panel dash-grid__wide">
+      <div class="panel__head"><h2>Active projects</h2><a class="link-arrow" href="/admin/projects">View all</a></div>
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Project</th><th>Client</th><th>Progress</th><th>Due date</th><th>Status</th></tr></thead>
+          <tbody>
+            {projects.map((p) => (
+              <tr>
+                <td><a href={`/admin/projects/${p.id}`}>{p.name}</a></td>
+                <td class="muted">{p.client_name ?? '—'}</td>
+                <td><span class="progress"><span style={`width: ${Number(p.progress)}%`}></span></span> <span class="small muted">{p.progress}%</span></td>
+                <td>{fmtDate(p.due_date, 'dateShort')}</td>
+                <td><span class={`status status--${p.status}`}>{PROJECT_STATUSES[p.status]}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__head"><h2>Recent assets</h2><a class="link-arrow" href="/admin/assets">View all</a></div>
+      <div class="thumb-grid">
+        {assets.map((a) => (
+          <a href={`/admin/assets/${a.id}`} class="thumb">
+            {a.type === 'image' ? <img src={mediaUrl(a.path)} alt={a.title} loading="lazy" /> : <span class="thumb__file"><Icon name="file" /></span>}
+            <span class="thumb__tag">{a.type[0].toUpperCase() + a.type.slice(1)}</span>
+          </a>
+        ))}
+      </div>
+    </section>
+
+    {staff && (
+      <section class="panel dash-grid__wide">
+        <div class="panel__head"><h2>New leads</h2><a class="link-arrow" href="/admin/leads">View all</a></div>
+        <ol class="pipeline">
+          {['new', 'contacted', 'discovery', 'proposal', 'won'].map((s) => (
+            <li class={`pipeline__step pipeline__step--${s}`}><span>{LEAD_STATUSES[s]}</span><strong>{pipeline[s] ?? 0}</strong></li>
+          ))}
+        </ol>
+      </section>
+    )}
+
+    <section class={`panel ${staff ? '' : 'dash-grid__wide'}`}>
+      <div class="panel__head"><h2>Content performance</h2><span class="muted small">Monthly reach</span></div>
+      <ReachChart chart={chart} />
+    </section>
+
+    {staff && (
+      <section class="panel dash-grid__wide">
+        <div class="panel__head"><h2>Store &amp; events</h2><a class="link-arrow" href="/admin/settings#orders">Manage</a></div>
+        <div class="two-col">
+          <div>
+            <h3 class="small-title">Latest orders</h3>
+            <ul class="simple-list">
+              {orders.map((o) => <li><span>{o.reference} · {o.customer_name}</span><span>{money(Number(o.subtotal_cents))}</span></li>)}
+              {orders.length === 0 && <li class="muted">No orders yet.</li>}
+            </ul>
+          </div>
+          <div>
+            <h3 class="small-title">Latest registrations</h3>
+            <ul class="simple-list">
+              {registrations.map((r) => <li><span>{r.name}</span><span class="muted">{r.event_title}</span></li>)}
+              {registrations.length === 0 && <li class="muted">No registrations yet.</li>}
+            </ul>
+          </div>
+        </div>
+      </section>
+    )}
+  </div>
+</AdminLayout>

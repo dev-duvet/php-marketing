@@ -1,0 +1,54 @@
+---
+import Icon from '../../components/Icon.astro';
+import MediaCard from '../../components/MediaCard.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { serviceName } from '../../lib/catalog.ts';
+import { all, one } from '../../lib/db.ts';
+import { lines, mediaUrl } from '../../lib/format.ts';
+
+const project = await one('SELECT * FROM projects WHERE slug = ? AND is_public = 1', [Astro.params.slug ?? '']);
+if (!project) return Astro.rewrite('/404');
+const gallery = await all("SELECT * FROM assets WHERE project_id = ? AND type = 'image' ORDER BY id", [project.id]);
+---
+<PublicLayout title={project.name}>
+  <section class="page-hero container">
+    <a class="link-back" href="/work"><Icon name="chevron-left" /> All work</a>
+    <p class="eyebrow">{serviceName(project.service_type)}</p>
+    <h1>{project.name}</h1>
+  </section>
+  <section class="container">
+    <img class="case-cover" src={mediaUrl(project.cover_image)} alt="" />
+  </section>
+  <section class="section container split split--top">
+    <div>
+      <h2>Project overview</h2>
+      <p class="lead">{project.description}</p>
+      {project.deliverables && (
+        <>
+          <h3>Deliverables</h3>
+          <ul class="ticks">{lines(project.deliverables).map((l) => <li>{l}</li>)}</ul>
+        </>
+      )}
+    </div>
+    <aside class="panel">
+      <h2>Project outcomes</h2>
+      {project.outcomes
+        ? <ul class="ticks">{lines(project.outcomes).map((l) => <li>{l}</li>)}</ul>
+        : <p class="muted">Outcomes will be added once the project wraps.</p>}
+    </aside>
+  </section>
+  {gallery.length > 0 && (
+    <section class="section container section--tight">
+      <h2>Gallery</h2>
+      <div class="gallery-grid">
+        {gallery.map((item) => <MediaCard item={{ ...item, public_category: item.public_category || 'photography' }} />)}
+      </div>
+    </section>
+  )}
+  <section class="section container">
+    <div class="cta">
+      <div><h2>Want something similar?</h2><p class="muted">Tell us about your project.</p></div>
+      <a class="btn btn--primary" href={`/contact?service=${project.service_type}#enquiry`}>Start a project <Icon name="arrow-right" /></a>
+    </div>
+  </section>
+</PublicLayout>

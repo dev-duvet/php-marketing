@@ -1,0 +1,75 @@
+---
+import { PROJECT_STATUSES, SERVICES } from '../lib/catalog.ts';
+import { all } from '../lib/db.ts';
+import { clearOld } from '../lib/forms.ts';
+import Csrf from './Csrf.astro';
+import PageHead from './PageHead.astro';
+
+interface Props {
+  project: Record<string, any> | null;
+}
+const { project } = Astro.props;
+const old = Astro.locals.session.data.old;
+const v = (key: string, fallback = '') => String(old?.[key] ?? project?.[key] ?? fallback);
+const [clients, team, memberRows] = await Promise.all([
+  all('SELECT id, name FROM clients ORDER BY name'),
+  all("SELECT id, name, title FROM users WHERE role != 'client' AND is_active = 1 ORDER BY name"),
+  project ? all('SELECT user_id FROM project_members WHERE project_id = ?', [project.id]) : Promise.resolve([{ user_id: Astro.locals.user!.id }]),
+]);
+const memberIds = old?.members ? [].concat(old.members).map(Number) : memberRows.map((m) => Number(m.user_id));
+const progress = Number(v('progress', '0'));
+const isPublic = old ? Boolean(old.is_public) : Boolean(project?.is_public);
+const action = project ? `/admin/projects/${project.id}/edit` : '/admin/projects/new';
+const cancel = project ? `/admin/projects/${project.id}` : '/admin/projects';
+clearOld(Astro);
+---
+<PageHead heading={project ? 'Edit project' : 'New project'} />
+<form class="panel form" method="post" action={action}>
+  <Csrf />
+  <div class="form-grid">
+    <label class="field field--full"><span>Project name <em>*</em></span><input name="name" required maxlength="160" value={v('name')} /></label>
+    <label class="field"><span>Client</span>
+      <select name="client_id">
+        <option value="">No client / new client</option>
+        {clients.map((c) => <option value={c.id} selected={v('client_id') === String(c.id)}>{c.name}</option>)}
+      </select>
+    </label>
+    <label class="field"><span>…or add a new client</span><input name="new_client" maxlength="160" placeholder="Client name" value={String(old?.new_client ?? '')} /></label>
+    <label class="field"><span>Service type</span>
+      <select name="service_type">
+        <option value="">Choose…</option>
+        {Object.entries(SERVICES).map(([slug, s]) => <option value={slug} selected={v('service_type') === slug}>{s.name}</option>)}
+      </select>
+    </label>
+    <label class="field"><span>Status</span>
+      <select name="status">{Object.entries(PROJECT_STATUSES).map(([key, label]) => <option value={key} selected={v('status', 'planning') === key}>{label}</option>)}</select>
+    </label>
+    <label class="field"><span>Start date</span><input type="date" name="start_date" value={v('start_date')} /></label>
+    <label class="field"><span>Due date</span><input type="date" name="due_date" value={v('due_date')} /></label>
+    <label class="field field--full"><span class="field__row">Progress <output class="muted small" data-range-output>{progress}%</output></span>
+      <input type="range" name="progress" min="0" max="100" step="5" value={progress} data-range />
+    </label>
+    <label class="field field--full"><span>Description</span><textarea name="description" rows="3">{v('description')}</textarea></label>
+    <label class="field"><span>Deliverables (one per line)</span><textarea name="deliverables" rows="5">{v('deliverables')}</textarea></label>
+    <fieldset class="field">
+      <legend>Team members</legend>
+      <input type="hidden" name="members[]" value="" />
+      <div class="check-list">
+        {team.map((t) => (
+          <label class="check"><input type="checkbox" name="members[]" value={t.id} checked={memberIds.includes(Number(t.id))} /> {t.name} <span class="muted small">{t.title}</span></label>
+        ))}
+      </div>
+    </fieldset>
+    <label class="field field--full"><span>Internal notes</span><textarea name="notes" rows="3">{v('notes')}</textarea></label>
+    <fieldset class="field field--full fieldset-box">
+      <legend>Public case study</legend>
+      <label class="check"><input type="checkbox" name="is_public" value="1" checked={isPublic} /> Show this project on the public Work page</label>
+      <label class="field"><span>Project outcomes (one per line — only include real, measured results)</span><textarea name="outcomes" rows="3">{v('outcomes')}</textarea></label>
+    </fieldset>
+  </div>
+  <div class="form-actions">
+    <a class="btn btn--text" href={cancel}>Cancel</a>
+    <span class="spacer"></span>
+    <button class="btn btn--primary" type="submit">{project ? 'Save changes' : 'Create project'}</button>
+  </div>
+</form>

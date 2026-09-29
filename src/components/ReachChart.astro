@@ -1,0 +1,46 @@
+---
+import { PLATFORMS } from '../lib/catalog.ts';
+import type { ReachSeries } from '../lib/dashboard.ts';
+import { fmtDate } from '../lib/format.ts';
+
+interface Props {
+  chart: ReachSeries;
+}
+const { chart } = Astro.props;
+const w = 640, h = 220, padL = 48, padR = 12, padT = 12, padB = 28;
+const values = Object.values(chart.series).flat();
+const max = Math.max(1000, Math.ceil(Math.max(1, ...values) / 1000) * 1000);
+const n = Math.max(1, chart.periods.length - 1);
+const x = (i: number) => padL + ((w - padL - padR) * i) / n;
+const y = (v: number) => padT + (h - padT - padB) * (1 - v / max);
+const r1 = (v: number) => Math.round(v * 10) / 10;
+const grid = [0, 1, 2, 3, 4].map((g) => Math.round((max * g) / 4));
+const label = (p: string) => fmtDate(`${p}-01`, 'month');
+---
+{chart.periods.length === 0 ? (
+  <p class="muted">No analytics yet. Add monthly figures on the Analytics page.</p>
+) : (
+  <figure class="chart">
+    <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Monthly reach by platform (demo figures)">
+      {grid.map((gv) => (
+        <>
+          <line class="chart__grid" x1={padL} x2={w - padR} y1={y(gv)} y2={y(gv)} />
+          <text class="chart__label" x={padL - 8} y={y(gv) + 4} text-anchor="end">{gv >= 1000 ? `${r1(gv / 1000)}k` : gv}</text>
+        </>
+      ))}
+      {chart.periods.map((p, i) => <text class="chart__label" x={x(i)} y={h - 8} text-anchor="middle">{label(p)}</text>)}
+      {Object.entries(chart.series).map(([platform, vals]) => (
+        <>
+          <polyline class={`chart__line chart__line--${platform}`} points={vals.map((v, i) => `${r1(x(i))},${r1(y(v))}`).join(' ')} />
+          {vals.map((v, i) => (
+            <circle class={`chart__dot chart__line--${platform}`} cx={r1(x(i))} cy={r1(y(v))} r="3"><title>{`${PLATFORMS[platform]} · ${fmtDate(`${chart.periods[i]}-01`, 'monthYear')}: ${v.toLocaleString('en-ZA')}`}</title></circle>
+          ))}
+        </>
+      ))}
+    </svg>
+    <figcaption class="legend">
+      {Object.entries(PLATFORMS).map(([key, name]) => <span><i class={`legend__swatch chart__line--${key}`}></i>{name}</span>)}
+      <span class="chip chip--muted">Demo data</span>
+    </figcaption>
+  </figure>
+)}

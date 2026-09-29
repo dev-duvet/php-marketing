@@ -1,0 +1,14 @@
+---
+interface Props {
+  heading: string;
+  sub?: string;
+}
+const { heading, sub } = Astro.props;
+---
+<div class="page-head">
+  <div>
+    <h1>{heading}</h1>
+    {sub && <p class="muted">{sub}</p>}
+  </div>
+  {Astro.slots.has('default') && <div class="page-head__actions"><slot /></div>}
+</div>

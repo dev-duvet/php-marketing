@@ -1,0 +1,74 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { mediaUrl, money } from '../../lib/format.ts';
+import { done, handle, readForm } from '../../lib/forms.ts';
+import { addToCart, cartSummary } from '../../lib/shop.ts';
+import { int } from '../../lib/validate.ts';
+
+const session = Astro.locals.session;
+const cart = (session.data.cart ??= {});
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, '/store/cart', async () => {
+    if (data.action === 'add') {
+      const name = await addToCart(cart, int(data.product_id), int(data.quantity, 1));
+      return done(Astro, `${name} added to your cart.`, '/store/cart');
+    }
+    for (const [key, value] of Object.entries(data)) {
+      const m = /^qty_(\d+)$/.exec(key);
+      if (!m) continue;
+      const qty = int(value);
+      if (qty < 1) delete cart[m[1]];
+      else cart[m[1]] = Math.min(qty, 10);
+    }
+    if (int(data.remove) > 0) delete cart[String(int(data.remove))];
+    return done(Astro, 'Cart updated.', '/store/cart');
+  });
+}
+
+const summary = await cartSummary(cart);
+---
+<PublicLayout title="Your cart">
+  <section class="section container narrow">
+    <h1>Your cart</h1>
+    {summary.items.length === 0 ? (
+      <>
+        <p class="lead muted">Your cart is empty.</p>
+        <a class="btn btn--navy" href="/store">Browse the store</a>
+      </>
+    ) : (
+      <>
+        <form method="post" action="/store/cart" class="card">
+          <Csrf />
+          <button type="submit" class="sr-only" tabindex="-1" aria-hidden="true">Update cart</button>
+          <ul class="cart-list">
+            {summary.items.map(({ product: p, quantity, line }) => (
+              <li class="cart-row">
+                <img src={mediaUrl(p.image)} alt="" width="72" height="72" />
+                <div class="cart-row__name"><a href={`/store/${p.slug}`}>{p.name}</a><span class="muted small">{money(Number(p.price_cents))} each</span></div>
+                <div class="qty" data-qty>
+                  <button type="button" class="qty__btn" data-step="-1" aria-label={`Decrease quantity of ${p.name}`}>−</button>
+                  <input type="number" name={`qty_${p.id}`} value={quantity} min="0" max="10" aria-label={`Quantity of ${p.name}`} />
+                  <button type="button" class="qty__btn" data-step="1" aria-label={`Increase quantity of ${p.name}`}>+</button>
+                </div>
+                <strong class="cart-row__total">{money(line)}</strong>
+                <button class="icon-btn" type="submit" name="remove" value={p.id} aria-label={`Remove ${p.name}`}><Icon name="trash" /></button>
+              </li>
+            ))}
+          </ul>
+          <div class="cart-summary">
+            <button class="btn btn--ghost" type="submit">Update cart</button>
+            <span>Subtotal <strong>{money(summary.subtotal)}</strong></span>
+          </div>
+        </form>
+        <div class="button-row button-row--end">
+          <a class="btn btn--text" href="/store">Continue shopping</a>
+          <a class="btn btn--primary" href="/store/checkout">Checkout <Icon name="arrow-right" /></a>
+        </div>
+      </>
+    )}
+  </section>
+</PublicLayout>

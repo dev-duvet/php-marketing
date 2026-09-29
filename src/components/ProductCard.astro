@@ -1,0 +1,10 @@
+---
+import { mediaUrl, money } from '../lib/format.ts';
+
+const { product } = Astro.props as { product: Record<string, any> };
+---
+<a class="product-card" href={`/store/${product.slug}`}>
+  <span class="product-card__img"><img src={mediaUrl(product.image)} alt={product.name} loading="lazy" /></span>
+  <strong>{product.name}</strong>
+  <span class="muted">{money(Number(product.price_cents))}</span>
+</a>

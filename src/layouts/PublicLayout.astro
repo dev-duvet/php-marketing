@@ -1,0 +1,92 @@
+---
+import BrandVars from '../components/BrandVars.astro';
+import Flash from '../components/Flash.astro';
+import Icon from '../components/Icon.astro';
+import IconSprite from '../components/IconSprite.astro';
+import Socials from '../components/Socials.astro';
+import { mediaUrl } from '../lib/format.ts';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+const { title = '', description = 'CreateZA — photography, video, websites and social content for bold ideas and bigger stories.' } = Astro.props;
+const nav: [string, string][] = [['/', 'Home'], ['/about', 'About'], ['/services', 'Services'], ['/gallery', 'Gallery'], ['/work', 'Work'], ['/store', 'Store'], ['/events', 'Events'], ['/contact', 'Contact']];
+const path = Astro.url.pathname;
+const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
+const settings = Astro.locals.settings;
+const cartCount = Object.values(Astro.locals.session.data.cart ?? {}).reduce((a, b) => a + Number(b), 0);
+const logo = mediaUrl(settings.logo_path || 'assets/brand/createza-logo.jpg');
+const hasFlash = (Astro.locals.session.data.flash ?? []).length > 0;
+---
+<!doctype html>
+<html lang="en-ZA">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title ? `${title} — CreateZA` : 'CreateZA'}</title>
+  <meta name="description" content={description} />
+  <link rel="icon" href="/assets/brand/createza-logo.jpg" />
+  <link rel="stylesheet" href="/assets/css/app.css" />
+  <BrandVars />
+</head>
+<body class="site">
+  <IconSprite />
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="site-logo" href="/" aria-label="CreateZA home"><img src={logo} alt="CreateZA" width="56" height="56" /></a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+        <Icon name="menu" /><span class="sr-only">Menu</span>
+      </button>
+      <nav class="site-nav" id="site-nav" aria-label="Main">
+        <ul>
+          {nav.map(([href, label]) => (
+            <li><a href={href} class={isActive(href) ? 'is-active' : ''} aria-current={isActive(href) ? 'page' : undefined}>{label}</a></li>
+          ))}
+        </ul>
+        <div class="site-nav__actions">
+          <a class="cart-link" href="/store/cart" aria-label={`Cart, ${cartCount} items`}><Icon name="cart" />{cartCount > 0 && <span class="badge">{cartCount}</span>}</a>
+          <a class="btn btn--primary btn--sm" href="/contact">Start a project <Icon name="arrow-right" /></a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    {hasFlash && <div class="container flash-wrap"><Flash /></div>}
+    <slot />
+  </main>
+
+  <footer class="site-footer">
+    <div class="container site-footer__grid">
+      <div>
+        <img class="site-footer__logo" src={logo} alt="CreateZA" width="72" height="72" loading="lazy" />
+        <p class="muted">{settings.company_tagline || 'Creative work made to move.'}</p>
+      </div>
+      <nav aria-label="Footer">
+        <h2 class="footer-title">Quick links</h2>
+        <ul class="footer-links">
+          {nav.map(([href, label]) => <li><a href={href}>{label}</a></li>)}
+        </ul>
+      </nav>
+      <div>
+        <h2 class="footer-title">Let’s create together</h2>
+        <p class="muted">Have a project in mind? We’d love to hear from you.</p>
+        <p><a class="btn btn--primary btn--sm" href="/contact">Start a project <Icon name="arrow-right" /></a></p>
+        <p class="muted small">{settings.company_email}</p>
+      </div>
+      <div>
+        <h2 class="footer-title">Follow</h2>
+        <Socials />
+      </div>
+    </div>
+    <div class="container site-footer__base">
+      <span>&copy; {new Date().getFullYear()} {settings.company_name || 'CreateZA'}. All rights reserved.</span>
+      <a href="/admin">Team sign in</a>
+    </div>
+  </footer>
+  <script is:inline src="/assets/js/site.js" defer></script>
+</body>
+</html>

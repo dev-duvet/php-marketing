@@ -1,0 +1,105 @@
+---
+import Csrf from '../../../../components/Csrf.astro';
+import Icon from '../../../../components/Icon.astro';
+import PageHead from '../../../../components/PageHead.astro';
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+import { LEAD_STATUSES, serviceName } from '../../../../lib/catalog.ts';
+import { all, one, run } from '../../../../lib/db.ts';
+import { fmtDate, lines } from '../../../../lib/format.ts';
+import { done, handle, readForm } from '../../../../lib/forms.ts';
+import { addLeadActivity, moveLead } from '../../../../lib/leads.ts';
+import { ValidationError, Validator, int, str } from '../../../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const id = int(Astro.params.id);
+const lead = await one('SELECT l.*, u.name AS assignee FROM leads l LEFT JOIN users u ON u.id = l.assigned_to WHERE l.id = ?', [id]);
+if (!lead) return Astro.rewrite('/404');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  const back = `/admin/leads/${id}`;
+  return handle(Astro, data, back, async () => {
+    if (data.action === 'note') {
+      const body = str(data.body);
+      if (!body || body.length > 2000) throw new ValidationError('Notes must be between 1 and 2000 characters.');
+      await addLeadActivity(id, body, user.id);
+      await run('UPDATE leads SET updated_at = now_local() WHERE id = ?', [id]);
+      return Astro.redirect(`${back}#activity`, 303);
+    }
+    new Validator(data).date('follow_up_date').in('status', Object.keys(LEAD_STATUSES), 'status').max('notes', 5000, 'Notes').check();
+    const assigned = str(data.assigned_to) ? int(data.assigned_to) : null;
+    await run('UPDATE leads SET follow_up_date = ?, assigned_to = ?, notes = ?, updated_at = now_local() WHERE id = ?', [
+      str(data.follow_up_date) || null, assigned, str(data.notes), id,
+    ]);
+    if (assigned && Number(lead.assigned_to) !== assigned) {
+      const who = await one('SELECT name FROM users WHERE id = ?', [assigned]);
+      if (who) await addLeadActivity(id, `Assigned to ${who.name}.`, user.id);
+    }
+    if (str(data.status)) await moveLead(id, str(data.status), user.id);
+    return done(Astro, 'Lead updated.', back);
+  });
+}
+
+const [activities, team] = await Promise.all([
+  all('SELECT a.*, u.name AS user_name FROM lead_activities a LEFT JOIN users u ON u.id = a.user_id WHERE a.lead_id = ? ORDER BY a.created_at DESC, a.id DESC', [id]),
+  all("SELECT id, name FROM users WHERE role != 'client' AND is_active = 1 ORDER BY name"),
+]);
+---
+<AdminLayout title={lead.name}>
+  <PageHead heading={lead.name} sub={`Received ${fmtDate(lead.created_at)} via ${lead.source}`}>
+    <a class="btn btn--ghost" href="/admin/leads"><Icon name="chevron-left" /> Pipeline</a>
+  </PageHead>
+  <div class="dash-grid">
+    <section class="panel">
+      <div class="panel__head"><h2>Enquiry details</h2><span class={`status status--${lead.status}`}>{LEAD_STATUSES[lead.status]}</span></div>
+      <dl class="facts facts--stack">
+        <div><dt>Email</dt><dd><a href={`mailto:${lead.email}`}>{lead.email}</a></dd></div>
+        <div><dt>Phone</dt><dd>{lead.phone ? <a href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a> : '—'}</dd></div>
+        <div><dt>Organisation</dt><dd>{lead.organisation || '—'}</dd></div>
+        <div><dt>Service interest</dt><dd>{serviceName(lead.service)}</dd></div>
+        <div><dt>Budget</dt><dd>{lead.budget || '—'}</dd></div>
+        <div><dt>Preferred start</dt><dd>{fmtDate(lead.preferred_start)}</dd></div>
+      </dl>
+      <h3 class="small-title">Description</h3>
+      {lines(lead.details).map((l) => <p>{l}</p>)}
+    </section>
+
+    <section class="panel">
+      <h2>Manage</h2>
+      <form class="form" method="post" action={`/admin/leads/${id}`}>
+        <Csrf />
+        <label class="field"><span>Stage</span>
+          <select name="status">{Object.entries(LEAD_STATUSES).map(([k, l]) => <option value={k} selected={lead.status === k}>{l}</option>)}</select>
+        </label>
+        <label class="field"><span>Assigned to</span>
+          <select name="assigned_to">
+            <option value="">Unassigned</option>
+            {team.map((t) => <option value={t.id} selected={Number(lead.assigned_to) === Number(t.id)}>{t.name}</option>)}
+          </select>
+        </label>
+        <label class="field"><span>Follow-up date</span><input type="date" name="follow_up_date" value={lead.follow_up_date ?? ''} /></label>
+        <label class="field"><span>Notes</span><textarea name="notes" rows="4">{lead.notes ?? ''}</textarea></label>
+        <button class="btn btn--navy" type="submit">Save</button>
+      </form>
+    </section>
+
+    <section class="panel dash-grid__wide" id="activity">
+      <h2>Activity history</h2>
+      <form class="comment-form" method="post" action={`/admin/leads/${id}`}>
+        <Csrf />
+        <input type="hidden" name="action" value="note" />
+        <label class="sr-only" for="note">Add a note</label>
+        <input id="note" name="body" required maxlength="2000" placeholder="Log a call, email or note…" />
+        <button class="btn btn--ghost btn--sm" type="submit"><Icon name="plus" /> Add note</button>
+      </form>
+      <ol class="timeline">
+        {activities.map((a) => (
+          <li class="timeline__item">
+            <p>{a.body}</p>
+            <span class="muted small">{a.user_name ?? 'System'} · {fmtDate(a.created_at, 'dateTime')}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  </div>
+</AdminLayout>

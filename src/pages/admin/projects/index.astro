@@ -1,0 +1,52 @@
+---
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { clientScope, isStaff } from '../../../lib/auth.ts';
+import { PROJECT_STATUSES, serviceName } from '../../../lib/catalog.ts';
+import { all, groupConcat } from '../../../lib/db.ts';
+import { fmtDate } from '../../../lib/format.ts';
+
+const user = Astro.locals.user!;
+const status = Astro.url.searchParams.get('status') ?? '';
+const filter = PROJECT_STATUSES[status] ? ' AND p.status = ?' : '';
+const [scope, params] = clientScope(user);
+const projects = await all(
+  `SELECT p.*, c.name AS client_name,
+          (SELECT COUNT(*) FROM content_items WHERE project_id = p.id) AS content_count,
+          (SELECT ${groupConcat('u.name', ', ')} FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = p.id) AS members
+   FROM projects p LEFT JOIN clients c ON c.id = p.client_id
+   WHERE 1=1${scope}${filter} ORDER BY CASE WHEN p.status = 'completed' THEN 1 ELSE 0 END, p.due_date`,
+  filter ? [...params, status] : params,
+);
+---
+<AdminLayout title="Projects">
+  <PageHead heading="Projects" sub="Track client work from planning to handover.">
+    {isStaff(user) && <a class="btn btn--primary" href="/admin/projects/new"><Icon name="plus" /> New project</a>}
+  </PageHead>
+  <section class="panel">
+    <nav class="filters filters--sm" aria-label="Filter by status">
+      <a class={`filter ${status === '' ? 'is-active' : ''}`} href="/admin/projects">All</a>
+      {Object.entries(PROJECT_STATUSES).map(([key, label]) => <a class={`filter ${status === key ? 'is-active' : ''}`} href={`/admin/projects?status=${key}`}>{label}</a>)}
+    </nav>
+    <div class="table-scroll">
+      <table class="table">
+        <thead><tr><th>Project</th><th>Client</th><th>Service</th><th>Team</th><th>Progress</th><th>Due</th><th>Status</th></tr></thead>
+        <tbody>
+          {projects.map((p) => (
+            <tr>
+              <td><a href={`/admin/projects/${p.id}`}><strong>{p.name}</strong></a><span class="muted small block">{p.content_count} content items</span></td>
+              <td class="muted">{p.client_name ?? '—'}</td>
+              <td>{serviceName(p.service_type) || '—'}</td>
+              <td class="muted small">{p.members ?? '—'}</td>
+              <td><span class="progress"><span style={`width: ${Number(p.progress)}%`}></span></span> <span class="small muted">{p.progress}%</span></td>
+              <td>{fmtDate(p.due_date, 'dateShort')}</td>
+              <td><span class={`status status--${p.status}`}>{PROJECT_STATUSES[p.status]}</span></td>
+            </tr>
+          ))}
+          {projects.length === 0 && <tr><td colspan="7" class="muted">No projects yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</AdminLayout>

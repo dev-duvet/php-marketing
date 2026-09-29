@@ -1,0 +1,64 @@
+---
+import Csrf from '../../components/Csrf.astro';
+import Icon from '../../components/Icon.astro';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import { one } from '../../lib/db.ts';
+import { fmtDate, lines, mediaUrl, nowLocal } from '../../lib/format.ts';
+import { clearOld, done, handle, oldValue, readForm } from '../../lib/forms.ts';
+import { EVENT_WITH_COUNTS, registerForEvent } from '../../lib/shop.ts';
+
+const slug = Astro.params.slug ?? '';
+const back = `/events/${slug}#register`;
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, back, async () => {
+    await registerForEvent(slug, data);
+    return done(Astro, 'You’re registered! We’ll email the details closer to the day.', back);
+  });
+}
+
+const event = await one(`${EVENT_WITH_COUNTS} WHERE slug = ?`, [slug]);
+if (!event) return Astro.rewrite('/404');
+const left = Math.max(0, Number(event.capacity) - Number(event.booked));
+const isPast = event.starts_at < nowLocal();
+const v = { name: oldValue(Astro, 'name'), email: oldValue(Astro, 'email'), phone: oldValue(Astro, 'phone') };
+clearOld(Astro);
+---
+<PublicLayout title={event.title}>
+  <section class="page-hero container">
+    <a class="link-back" href="/events"><Icon name="chevron-left" /> All events</a>
+    <p class="eyebrow">{isPast ? 'Past event' : 'Event'}</p>
+    <h1>{event.title}</h1>
+    <p class="meta-row">
+      <span><Icon name="calendar" /> {fmtDate(event.starts_at, 'full')}</span>
+      <span><Icon name="map-pin" /> {event.location}</span>
+    </p>
+  </section>
+  <section class="section container section--tight split split--top">
+    <div>
+      <img class="case-cover" src={mediaUrl(event.image)} alt="" />
+      <div class="prose">{lines(event.description).map((l) => <p>{l}</p>)}</div>
+    </div>
+    <aside class="card" id="register">
+      <h2>Register</h2>
+      <p class="muted">{event.capacity} spaces · <strong>{left} left</strong></p>
+      {isPast ? (
+        <p class="notice">Registration has closed for this event.</p>
+      ) : left === 0 ? (
+        <p class="notice">This event is fully booked.</p>
+      ) : (
+        <form class="form" method="post" action={`/events/${event.slug}`}>
+          <Csrf />
+          <label class="field"><span>Name <em>*</em></span><input name="name" required autocomplete="name" value={v.name} /></label>
+          <label class="field"><span>Email <em>*</em></span><input type="email" name="email" required autocomplete="email" value={v.email} /></label>
+          <label class="field"><span>Phone</span><input type="tel" name="phone" autocomplete="tel" value={v.phone} /></label>
+          <label class="field"><span>Number of people</span>
+            <select name="guests">{Array.from({ length: Math.min(5, left) }, (_, i) => <option>{i + 1}</option>)}</select>
+          </label>
+          <button class="btn btn--primary" type="submit">Reserve my spot</button>
+        </form>
+      )}
+    </aside>
+  </section>
+</PublicLayout>

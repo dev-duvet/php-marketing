@@ -1,0 +1,141 @@
+---
+import Csrf from '../../../components/Csrf.astro';
+import Icon from '../../../components/Icon.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { logActivity } from '../../../lib/app.ts';
+import { syncTags } from '../../../lib/assets.ts';
+import { clientScope, isStaff } from '../../../lib/auth.ts';
+import { CONTENT_STATUSES, GALLERY_CATEGORIES } from '../../../lib/catalog.ts';
+import { attachAsset } from '../../../lib/content.ts';
+import { all, one, run } from '../../../lib/db.ts';
+import { extension, fmtDate, humanSize, mediaUrl } from '../../../lib/format.ts';
+import { done, handle, readForm } from '../../../lib/forms.ts';
+import { deleteStoredFile } from '../../../lib/upload.ts';
+import { ValidationError, int, str } from '../../../lib/validate.ts';
+
+const user = Astro.locals.user!;
+const staff = isStaff(user);
+const id = int(Astro.params.id);
+const [scope, params] = clientScope(user);
+const asset = await one(`SELECT a.*, p.name AS project_name FROM assets a LEFT JOIN projects p ON p.id = a.project_id WHERE a.id = ?${scope}`, [id, ...params]);
+if (!asset) return Astro.rewrite('/404');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  const back = `/admin/assets/${id}`;
+  return handle(Astro, data, back, async () => {
+    if (data.action === 'delete') {
+      if (data.confirm !== 'yes') throw new ValidationError('Tick the confirmation box to delete this asset.');
+      await run('DELETE FROM assets WHERE id = ?', [id]);
+      await deleteStoredFile(asset.path);
+      await logActivity(user.id, 'asset.deleted', `Asset #${id} deleted (${asset.title})`, Astro.locals.ip);
+      return done(Astro, 'Asset deleted.', '/admin/assets');
+    }
+    if (data.action === 'attach') {
+      const contentId = int(data.content_id);
+      if (!(await one('SELECT id FROM content_items WHERE id = ?', [contentId]))) throw new ValidationError('Choose a content item.');
+      await attachAsset(contentId, id);
+      return done(Astro, 'Asset attached to content.', back);
+    }
+    const title = str(data.title);
+    if (!title || title.length > 120) throw new ValidationError('Title must be between 1 and 120 characters.');
+    const category = GALLERY_CATEGORIES[str(data.public_category)] ? str(data.public_category) : null;
+    await run('UPDATE assets SET title = ?, project_id = ?, public_category = ? WHERE id = ?', [title, str(data.project_id) ? int(data.project_id) : null, category, id]);
+    await syncTags(id, str(data.tags), true);
+    return done(Astro, 'Asset updated.', back);
+  });
+}
+
+const [tagRows, usedIn, projects, contentItems] = await Promise.all([
+  all('SELECT t.name FROM asset_tag_map m JOIN asset_tags t ON t.id = m.tag_id WHERE m.asset_id = ? ORDER BY t.name', [id]),
+  all('SELECT c.id, c.title, c.status FROM content_items c JOIN content_assets ca ON ca.content_id = c.id WHERE ca.asset_id = ?', [id]),
+  all('SELECT id, name FROM projects ORDER BY name'),
+  all("SELECT id, title FROM content_items WHERE status != 'published' ORDER BY publish_at"),
+]);
+const tags = tagRows.map((t) => t.name).join(', ');
+---
+<AdminLayout title={asset.title}>
+  <PageHead heading={asset.title} sub={`${extension(asset.path)} · ${humanSize(Number(asset.size))} · uploaded ${fmtDate(asset.created_at)}`}>
+    <a class="btn btn--ghost" href="/admin/assets"><Icon name="chevron-left" /> Library</a>
+    <a class="btn btn--ghost" href={mediaUrl(asset.path)} download><Icon name="download" /> Download</a>
+  </PageHead>
+  <div class="dash-grid">
+    <section class="panel dash-grid__wide">
+      <div class="preview preview--contain">
+        {asset.type === 'image' ? <img src={mediaUrl(asset.path)} alt={asset.title} />
+          : asset.type === 'video' ? <video src={mediaUrl(asset.path)} controls preload="metadata"></video>
+          : <a class="preview__empty" href={mediaUrl(asset.path)} target="_blank" rel="noopener"><Icon name="file" /><span>Open file</span></a>}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Details</h2>
+      {staff ? (
+        <form class="form" method="post" action={`/admin/assets/${id}`}>
+          <Csrf />
+          <input type="hidden" name="action" value="update" />
+          <label class="field"><span>Title</span><input name="title" required maxlength="120" value={asset.title} /></label>
+          <label class="field"><span>Project</span>
+            <select name="project_id"><option value="">No project</option>{projects.map((p) => <option value={p.id} selected={Number(asset.project_id) === Number(p.id)}>{p.name}</option>)}</select>
+          </label>
+          <label class="field"><span>Tags (comma separated)</span><input name="tags" value={tags} /></label>
+          <label class="field"><span>Show in public gallery as</span>
+            <select name="public_category">
+              <option value="">Not in public gallery</option>
+              {Object.entries(GALLERY_CATEGORIES).map(([k, l]) => <option value={k} selected={asset.public_category === k}>{l}</option>)}
+            </select>
+          </label>
+          <button class="btn btn--navy" type="submit">Save details</button>
+        </form>
+      ) : (
+        <dl class="facts facts--stack">
+          <div><dt>Project</dt><dd>{asset.project_name ?? '—'}</dd></div>
+          <div><dt>Tags</dt><dd>{tags || '—'}</dd></div>
+        </dl>
+      )}
+    </section>
+
+    <section class="panel">
+      <h2>Used in</h2>
+      <ul class="simple-list">
+        {usedIn.map((c) => <li><a href={staff ? `/admin/content/${c.id}/edit` : `/admin/approvals/${c.id}`}>{c.title}</a><span class={`status status--${c.status}`}>{CONTENT_STATUSES[c.status]}</span></li>)}
+        {usedIn.length === 0 && <li class="muted">Not attached to any content yet.</li>}
+      </ul>
+      {staff && contentItems.length > 0 && (
+        <form class="inline-form" method="post" action={`/admin/assets/${id}`}>
+          <Csrf />
+          <input type="hidden" name="action" value="attach" />
+          <label class="sr-only" for="content_id">Attach to content</label>
+          <select id="content_id" name="content_id" required>
+            <option value="">Attach to content…</option>
+            {contentItems.map((c) => <option value={c.id}>{c.title}</option>)}
+          </select>
+          <button class="btn btn--ghost btn--sm" type="submit"><Icon name="link" /> Attach</button>
+        </form>
+      )}
+      {staff && (
+        <>
+          <hr />
+          <button class="btn btn--danger-text" type="button" data-open-dialog="delete-asset"><Icon name="trash" /> Delete asset</button>
+        </>
+      )}
+    </section>
+  </div>
+
+  {staff && (
+    <dialog class="dialog" id="delete-asset">
+      <form method="post" action={`/admin/assets/${id}`}>
+        <Csrf />
+        <input type="hidden" name="action" value="delete" />
+        <h2>Delete this asset?</h2>
+        <p class="muted">“{asset.title}” will be removed from the library and from {usedIn.length} content item(s). This can’t be undone.</p>
+        <label class="check"><input type="checkbox" name="confirm" value="yes" required /> I understand, delete it</label>
+        <div class="form-actions">
+          <button class="btn btn--ghost" type="button" data-close-dialog>Cancel</button>
+          <button class="btn btn--danger" type="submit">Delete asset</button>
+        </div>
+      </form>
+    </dialog>
+  )}
+</AdminLayout>

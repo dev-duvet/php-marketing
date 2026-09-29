@@ -1,0 +1,22 @@
+---
+import Icon from '../components/Icon.astro';
+import PageHero from '../components/PageHero.astro';
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { SERVICES } from '../lib/catalog.ts';
+---
+<PublicLayout title="Services">
+  <PageHero eyebrow="Services" heading="What we do" intro="End-to-end creative media — from the first idea to the final post." />
+  <section class="section container service-list">
+    {Object.entries(SERVICES).map(([slug, s]) => (
+      <article class="service-row" id={slug}>
+        <img src={`/${s.image}`} alt="" loading="lazy" />
+        <div>
+          <h2>{s.name}</h2>
+          <p class="lead">{s.summary}</p>
+          <p class="muted">{s.detail}</p>
+          <a class="btn btn--navy" href={`/contact?service=${slug}#enquiry`}>Enquire about {s.name.toLowerCase()} <Icon name="arrow-right" /></a>
+        </div>
+      </article>
+    ))}
+  </section>
+</PublicLayout>

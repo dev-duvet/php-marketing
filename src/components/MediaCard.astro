@@ -1,0 +1,23 @@
+---
+import { GALLERY_CATEGORIES } from '../lib/catalog.ts';
+import { mediaUrl } from '../lib/format.ts';
+import Icon from './Icon.astro';
+
+interface Props {
+  item: Record<string, any>;
+  hidden?: boolean;
+}
+const { item, hidden = false } = Astro.props;
+const category = item.public_category ?? '';
+const isVideo = item.type === 'video' || category === 'video';
+---
+<figure class="media-card" data-category={category} hidden={hidden}>
+  {item.type === 'video'
+    ? <video src={mediaUrl(item.path)} muted playsinline preload="metadata"></video>
+    : <img src={mediaUrl(item.path)} alt={item.title} loading="lazy" />}
+  {isVideo && <span class="media-card__play" aria-hidden="true"><Icon name="play" /></span>}
+  <figcaption>
+    <span class="chip chip--light">{GALLERY_CATEGORIES[category] ?? 'Media'}</span>
+    <span class="media-card__title">{item.title}</span>
+  </figcaption>
+</figure>

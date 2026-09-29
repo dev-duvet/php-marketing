@@ -1,0 +1,48 @@
+---
+import Csrf from '../../../components/Csrf.astro';
+import PageHead from '../../../components/PageHead.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { BUDGETS, LEAD_SOURCES, SERVICES } from '../../../lib/catalog.ts';
+import { clearOld, done, handle, oldValue, readForm } from '../../../lib/forms.ts';
+import { createLead } from '../../../lib/leads.ts';
+import { str } from '../../../lib/validate.ts';
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, '/admin/leads/new', async () => {
+    const source = LEAD_SOURCES[str(data.source)] ? str(data.source) : 'manual';
+    const id = await createLead(data, source, Astro.locals.user!.id);
+    return done(Astro, 'Lead created.', `/admin/leads/${id}`);
+  });
+}
+const o = (k: string) => oldValue(Astro, k);
+const v = Object.fromEntries(['name', 'email', 'phone', 'organisation', 'service', 'budget', 'source', 'preferred_start', 'details'].map((k) => [k, o(k)]));
+clearOld(Astro);
+---
+<AdminLayout title="New lead">
+  <PageHead heading="New lead" sub="Capture an enquiry that came in by phone, email or referral." />
+  <form class="panel form" method="post" action="/admin/leads/new">
+    <Csrf />
+    <div class="form-grid">
+      <label class="field"><span>Name <em>*</em></span><input name="name" required maxlength="120" value={v.name} /></label>
+      <label class="field"><span>Email <em>*</em></span><input type="email" name="email" required value={v.email} /></label>
+      <label class="field"><span>Phone</span><input name="phone" maxlength="40" value={v.phone} /></label>
+      <label class="field"><span>Business or organisation</span><input name="organisation" maxlength="160" value={v.organisation} /></label>
+      <label class="field"><span>Service interest <em>*</em></span>
+        <select name="service" required>
+          <option value="">Choose…</option>
+          {Object.entries(SERVICES).map(([slug, s]) => <option value={slug} selected={v.service === slug}>{s.name}</option>)}
+        </select>
+      </label>
+      <label class="field"><span>Budget</span>
+        <select name="budget"><option value="">Choose…</option>{BUDGETS.map((b) => <option selected={v.budget === b}>{b}</option>)}</select>
+      </label>
+      <label class="field"><span>Source</span>
+        <select name="source">{Object.entries(LEAD_SOURCES).map(([k, l]) => <option value={k} selected={v.source === k}>{l}</option>)}</select>
+      </label>
+      <label class="field"><span>Preferred start</span><input type="date" name="preferred_start" value={v.preferred_start} /></label>
+      <label class="field field--full"><span>Description <em>*</em></span><textarea name="details" rows="4" required>{v.details}</textarea></label>
+    </div>
+    <div class="form-actions"><a class="btn btn--text" href="/admin/leads">Cancel</a><span class="spacer"></span><button class="btn btn--primary" type="submit">Create lead</button></div>
+  </form>
+</AdminLayout>

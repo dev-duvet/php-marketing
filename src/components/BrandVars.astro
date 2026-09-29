@@ -1,0 +1,8 @@
+---
+import { safeHex } from '../lib/app.ts';
+
+// Brand colours are editable in Settings; only validated hex values are ever output.
+const s = Astro.locals.settings;
+const css = `:root{--navy:${safeHex(s.color_navy ?? '', '#14284B')};--red:${safeHex(s.color_red ?? '', '#C8161D')};--gold:${safeHex(s.color_gold ?? '', '#C9A13B')}}`;
+---
+<style is:inline set:html={css}></style>

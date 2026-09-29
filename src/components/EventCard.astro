@@ -1,0 +1,15 @@
+---
+import { fmtDate, mediaUrl } from '../lib/format.ts';
+
+const { event } = Astro.props as { event: Record<string, any> };
+---
+<a class="event-card" href={`/events/${event.slug}`}>
+  <img src={mediaUrl(event.image)} alt="" loading="lazy" />
+  <div class="event-card__body">
+    <span class="date-badge"><strong>{fmtDate(event.starts_at, 'dayNum')}</strong>{fmtDate(event.starts_at, 'monthUpper')}</span>
+    <span>
+      <strong class="event-card__title">{event.title}</strong>
+      <span class="muted small">{event.summary}</span>
+    </span>
+  </div>
+</a>

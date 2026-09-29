@@ -1,0 +1,105 @@
+---
+import BrandVars from '../components/BrandVars.astro';
+import Flash from '../components/Flash.astro';
+import Icon from '../components/Icon.astro';
+import IconSprite from '../components/IconSprite.astro';
+import Csrf from '../components/Csrf.astro';
+import { clientScope, type Role } from '../lib/auth.ts';
+import { ROLES } from '../lib/catalog.ts';
+import { count } from '../lib/db.ts';
+import { initials, mediaUrl } from '../lib/format.ts';
+
+interface Props {
+  title?: string;
+}
+const { title = 'Dashboard' } = Astro.props;
+const me = Astro.locals.user!;
+const everyone: Role[] = ['admin', 'team', 'client'];
+const staff: Role[] = ['admin', 'team'];
+const nav: [string, string, string, boolean, Role[]][] = [
+  ['/admin', 'Overview', 'home', true, everyone],
+  ['/admin/content', 'Content calendar', 'calendar', false, everyone],
+  ['/admin/projects', 'Projects', 'folder', false, everyone],
+  ['/admin/leads', 'Leads', 'users', false, staff],
+  ['/admin/approvals', 'Approvals', 'check-circle', false, everyone],
+  ['/admin/assets', 'Asset library', 'image', false, everyone],
+  ['/admin/analytics', 'Analytics', 'chart', false, staff],
+  ['/admin/settings', 'Settings', 'settings', false, everyone],
+];
+const path = Astro.url.pathname;
+const isActive = (href: string, exact: boolean) => (exact ? path === href : path === href || path.startsWith(`${href}/`));
+const [scope, params] = clientScope(me);
+const awaiting = await count(
+  `SELECT COUNT(*) FROM content_items c LEFT JOIN projects p ON p.id = c.project_id WHERE c.status = 'awaiting_approval'${scope}`,
+  params,
+);
+const csrf = Astro.locals.session.csrfToken();
+const isStaff = me.role !== 'client';
+---
+<!doctype html>
+<html lang="en-ZA">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <meta name="csrf-token" content={csrf} />
+  <title>{`${title} — CreateZA Studio`}</title>
+  <link rel="icon" href="/assets/brand/createza-logo.jpg" />
+  <link rel="stylesheet" href="/assets/css/app.css" />
+  <link rel="stylesheet" href="/assets/css/admin.css" />
+  <BrandVars />
+</head>
+<body class="studio">
+  <IconSprite />
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <aside class="sidebar" id="sidebar" aria-label="Dashboard">
+    <a class="sidebar__brand" href="/admin">
+      <img src={mediaUrl(Astro.locals.settings.logo_path || 'assets/brand/createza-logo.jpg')} alt="" width="48" height="48" />
+      <span>CreateZA Studio</span>
+    </a>
+    <nav>
+      <ul class="sidebar__nav">
+        {nav.filter(([, , , , roles]) => roles.includes(me.role)).map(([href, label, icon, exact]) => (
+          <li>
+            <a href={href} class={isActive(href, exact) ? 'is-active' : ''} aria-current={isActive(href, exact) ? 'page' : undefined}>
+              <Icon name={icon} /><span>{label}</span>
+              {href === '/admin/approvals' && awaiting > 0 && <span class="count">{awaiting}</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+    <div class="sidebar__user">
+      <span class="avatar">{initials(me.name)}</span>
+      <span class="sidebar__user-meta"><strong>{me.name}</strong><small>{ROLES[me.role]}</small></span>
+      <form method="post" action="/admin/logout"><Csrf />
+        <button class="icon-btn icon-btn--dark" type="submit" aria-label="Sign out" title="Sign out"><Icon name="logout" /></button>
+      </form>
+    </div>
+  </aside>
+  <div class="sidebar-scrim" data-sidebar-close></div>
+
+  <div class="studio-main">
+    <header class="topbar">
+      <button class="icon-btn topbar__menu" type="button" data-sidebar-toggle aria-controls="sidebar" aria-expanded="false" aria-label="Open menu"><Icon name="menu" /></button>
+      <form class="topbar__search" action="/admin/assets" method="get" role="search">
+        <Icon name="search" />
+        <label class="sr-only" for="global-search">Search assets</label>
+        <input id="global-search" type="search" name="q" placeholder="Search assets…" />
+      </form>
+      <div class="topbar__actions">
+        <a class="icon-btn" href="/admin/approvals" aria-label={`${awaiting} items awaiting approval`}><Icon name="bell" />{awaiting > 0 && <span class="dot"></span>}</a>
+        <a class="btn btn--ghost btn--sm" href="/" target="_blank" rel="noopener">View site</a>
+        {isStaff && <a class="btn btn--navy btn--sm" href="/admin/content/new"><Icon name="plus" /> New content</a>}
+      </div>
+    </header>
+
+    <main id="main" class="studio-content">
+      <Flash />
+      <slot />
+    </main>
+  </div>
+  <script is:inline src="/assets/js/admin.js" defer></script>
+</body>
+</html>

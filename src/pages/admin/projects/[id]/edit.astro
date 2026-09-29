@@ -1,0 +1,23 @@
+---
+import ProjectForm from '../../../../components/ProjectForm.astro';
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+import { one } from '../../../../lib/db.ts';
+import { done, handle, readForm } from '../../../../lib/forms.ts';
+import { saveProject } from '../../../../lib/projects.ts';
+import { int } from '../../../../lib/validate.ts';
+
+const id = int(Astro.params.id);
+const project = await one('SELECT * FROM projects WHERE id = ?', [id]);
+if (!project) return Astro.rewrite('/404');
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, `/admin/projects/${id}/edit`, async () => {
+    await saveProject(data, id, Astro.locals.user!.id);
+    return done(Astro, 'Project updated.', `/admin/projects/${id}`);
+  });
+}
+---
+<AdminLayout title="Edit project">
+  <ProjectForm project={project} />
+</AdminLayout>

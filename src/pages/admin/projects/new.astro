@@ -1,0 +1,17 @@
+---
+import ProjectForm from '../../../components/ProjectForm.astro';
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { done, handle, readForm } from '../../../lib/forms.ts';
+import { saveProject } from '../../../lib/projects.ts';
+
+if (Astro.request.method === 'POST') {
+  const { data } = await readForm(Astro);
+  return handle(Astro, data, '/admin/projects/new', async () => {
+    const id = await saveProject(data, null, Astro.locals.user!.id);
+    return done(Astro, 'Project created.', `/admin/projects/${id}`);
+  });
+}
+---
+<AdminLayout title="New project">
+  <ProjectForm project={null} />
+</AdminLayout>
