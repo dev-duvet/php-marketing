@@ -100,6 +100,8 @@ Sign in at `/admin`. All accounts use the `DEMO_PASSWORD` value (default `Create
    - copy **Connect → Transaction pooler** (port 6543) into the Vercel project as `DATABASE_URL`.
 3. Redeploy. The first request builds the schema and loads the demo data.
 
+**Current production setup:** Supabase project `createzadb` (ref `jvrgjugudczxundiknrd`, eu-west-1, Data API disabled) is connected to the Vercel project `createza` through the Supabase ↔ Vercel integration, which syncs `POSTGRES_URL` to Production.
+
 Without a database URL the site runs in **demo mode** (SQLite in `/tmp`, resets whenever Vercel recycles the function).
 
 ## 9. Docker
