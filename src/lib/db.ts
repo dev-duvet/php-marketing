@@ -58,12 +58,46 @@ function connectPg(): postgres.Sql {
     pg = postgres(url.toString(), {
       ssl: local ? false : 'require',
       prepare: false, // required for Supabase/pgBouncer transaction pooling
-      max: 3,
+      max: PG_MAX,
       idle_timeout: 20,
+      connect_timeout: 10,
       onnotice: () => {},
     });
   }
   return pg;
+}
+
+/*
+ * postgres.js pipelines extra queries onto busy connections once all `max` are in use.
+ * Supabase's transaction pooler (Supavisor) stalls on pipelined queries, so cap in-flight
+ * work at the pool size and let the rest wait here instead. Transactions hold one slot.
+ */
+const PG_MAX = 3;
+let activeSlots = 0;
+const slotWaiters: (() => void)[] = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeSlots < PG_MAX) {
+    activeSlots++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => slotWaiters.push(resolve)); // slot is handed over on release
+}
+
+function releaseSlot(): void {
+  const next = slotWaiters.shift();
+  if (next) next();
+  else activeSlots--;
+}
+
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (txScope.getStore()) return fn(); // already inside a transaction's reserved connection
+  await acquireSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseSlot();
+  }
 }
 
 function toPg(sql: string): string {
@@ -88,16 +122,14 @@ function normalise(result: postgres.RowList<Row[]>): Row[] {
 
 async function rawAll(sql: string, params: Param[] = []): Promise<Row[]> {
   if (driver() === 'pgsql') {
-    const conn = txScope.getStore() ?? connectPg();
-    return normalise(await conn.unsafe(toPg(sql), clean(params) as any[]));
+    return limited(async () => normalise(await (txScope.getStore() ?? connectPg()).unsafe(toPg(sql), clean(params) as any[])));
   }
   return connectSqlite().prepare(sql).all(...clean(params)).map((r) => ({ ...r }));
 }
 
 async function rawRun(sql: string, params: Param[] = []): Promise<number> {
   if (driver() === 'pgsql') {
-    const conn = txScope.getStore() ?? connectPg();
-    return (await conn.unsafe(toPg(sql), clean(params) as any[])).count;
+    return limited(async () => (await (txScope.getStore() ?? connectPg()).unsafe(toPg(sql), clean(params) as any[])).count);
   }
   return Number(connectSqlite().prepare(sql).run(...clean(params)).changes);
 }
@@ -183,7 +215,12 @@ export async function insert(table: string, data: Record<string, Param>): Promis
 export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
   if (driver() === 'pgsql') {
     if (txScope.getStore()) return fn();
-    return (await connectPg().begin((tx) => txScope.run(tx, fn))) as T;
+    await acquireSlot(); // the transaction reserves one pooled connection for its whole duration
+    try {
+      return (await connectPg().begin((tx) => txScope.run(tx, fn))) as T;
+    } finally {
+      releaseSlot();
+    }
   }
   const db = connectSqlite();
   if (db.isTransaction) return fn();
